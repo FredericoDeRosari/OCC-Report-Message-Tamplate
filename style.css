@@ -270,6 +270,9 @@ code, pre, .kbd { font-family: var(--mono); }
 .var-input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 70%, var(--line-2)); background: #0f1620; }
 .var-hint { font-size: 12px; color: var(--dim); margin-top: 6px; }
 
+.var-input.strict { cursor: default; background: var(--bg-2); border-style: dashed; font-weight: 600; }
+.var-input.strict:focus { border-style: solid; }
+
 /* pilihan cepat */
 .var-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .opt {
