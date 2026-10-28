@@ -134,6 +134,11 @@ Semua ada di **`templates.js`**:
 - Kalau orang lain menekan Set to Default, kotak yang **tidak** sedang kamu ubah ikut ter-update otomatis. Yang sedang kamu ubah tetap milikmu (tanda **!** tetap ada).
 - **Tanggal & Waktu Laporan** (`{Current Date}`) otomatis memakai waktu sekarang, dan tidak ikut dibekukan saat Set to Default kecuali memang kamu ubah.
 - Untuk Unjuk Rasa, tambah/hapus lokasi juga dihitung sebagai perubahan sementara.
+- **Alert** (🔴 Siaga 1 · 🟠 Siaga 2 · 🟡 Siaga 3 · 🟢 Siaga 4 · ⚪ Normal) dan **Status Pegawai/Aset/Operasional** hanya bisa dipilih lewat tombol, tidak bisa diketik bebas. Daftar pilihannya ada di bagian atas `templates.js` (`ALERT_OPTS`, `STATUS_OPTS`).
+- **Nomor Update**: `0` atau kosong → judul **LAPORAN**; `1`, `2`, … → **UPDATE 1**, **UPDATE 2**.
+
+### Kenapa default saya tidak berubah setelah update file?
+Default yang pernah di-*Set to Default* tersimpan di Firebase dan menimpa contoh di `templates.js`. Setiap kali `templates.js` diubah, **naikkan angka `TEMPLATE_VERSION`** di bagian atas file itu → semua default lama di Firebase otomatis diabaikan dan contoh baru yang dipakai. (Atau hapus node `defaults` di Firebase Console → Realtime Database → Data.)
 
 ## 🧹 Menghapus masukkan
 
