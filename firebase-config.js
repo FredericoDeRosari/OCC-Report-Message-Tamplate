@@ -9,11 +9,12 @@
 // =====================================================================
 
 export const firebaseConfig = {
-  apiKey: "ISI_API_KEY",
-  authDomain: "ISI_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://ISI_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "ISI_PROJECT_ID",
-  storageBucket: "ISI_PROJECT_ID.firebasestorage.app",
-  messagingSenderId: "ISI_SENDER_ID",
-  appId: "ISI_APP_ID"
+  apiKey: "AIzaSyAAusEKWB8hcLfUsFTPjZgAwcEMN-IGqM4",
+  authDomain: "bcm-occ.firebaseapp.com",
+  databaseURL: "https://bcm-occ-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "bcm-occ",
+  storageBucket: "bcm-occ.firebasestorage.app",
+  messagingSenderId: "419097772995",
+  appId: "1:419097772995:web:86cf270cad9826d95d7376",
+  measurementId: "G-5WB352W4ER"
 };
