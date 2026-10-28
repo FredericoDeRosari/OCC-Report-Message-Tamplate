@@ -176,6 +176,13 @@ function build(s, mode, opt = {}) {
     return mark(sc, k, mode === 'raw' ? `{${k}}` : String(val(s, sc, k)));
   };
   const fill = (tpl, scope) => {
+    // "LAPORAN / UPDATE {n}" → "LAPORAN" (n kosong) atau "UPDATE n"
+    if (mode !== 'raw') {
+      tpl = tpl.replace(/LAPORAN \/ UPDATE \{([^{}\n]+)\}( -)?/g, (m, k, dash) => {
+        const sc = isComputed(k) ? 'c' : scope;
+        return String(val(s, sc, k)).trim() ? `UPDATE {${k}}${dash || ''}` : 'LAPORAN';
+      });
+    }
     const out = [];
     for (const line of tpl.split('\n')) {
       if (mode !== 'raw') {
@@ -352,6 +359,7 @@ function varRow(s, scope, key) {
       <textarea id="${id}" rows="1" class="var-input" spellcheck="false" placeholder="${esc(ph)}">${esc(value)}</textarea>
       <button type="button" class="dirty-ic" data-act="dirty-info" title="Perubahan sementara" aria-label="Perubahan sementara — ketuk untuk info">!</button>
     </div>
+    ${meta.options ? `<div class="var-opts">${meta.options.map(o => `<button type="button" class="opt ${String(value) === o ? 'on' : ''}" data-act="opt" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
     ${meta.hint ? `<div class="var-hint">${esc(meta.hint)}</div>` : ''}
   </div>`;
 }
@@ -592,6 +600,8 @@ function markRow(row) {
   const d = isDirty(cur(), row.dataset.scope, row.dataset.k);
   row.classList.toggle('dirty', d);
   if (!d) $('.dirty-pop', row)?.remove();
+  const ta = $('textarea', row);
+  if (ta) $$('.opt', row).forEach(o => o.classList.toggle('on', o.dataset.v === ta.value));
 }
 function markAllRows() { $$('#vars .var').forEach(markRow); updateVarsFoot(); }
 // Default bersama berubah (dari orang lain / setelah Set to Default)
@@ -676,10 +686,10 @@ app.addEventListener('click', e => {
       state.hl = !state.hl; LS.set('hl', state.hl);
       $$('[data-act="hl"]').forEach(x => { x.classList.toggle('on', state.hl); x.setAttribute('aria-pressed', state.hl); });
       renderPreviews(); return;
-    case 'reset': case 'clear': case 'now': {
+    case 'reset': case 'clear': case 'now': case 'opt': {
       if (!row) return;
       const ta = $('textarea', row);
-      ta.value = act === 'clear' ? '' : act === 'now' ? nowWIB() : defaultOf(s, row.dataset.scope, row.dataset.k);
+      ta.value = act === 'clear' ? '' : act === 'now' ? nowWIB() : act === 'opt' ? b.dataset.v : defaultOf(s, row.dataset.scope, row.dataset.k);
       setVal(s, row.dataset.scope, row.dataset.k, ta.value); grow(ta); markAllRows(); schedule(); ta.focus();
       return;
     }
@@ -958,7 +968,7 @@ function renderRequestAgg(items) {
   FB.draft = [
     '*LAPORAN / UPDATE {Update Number} Situasi Tanah Longsor | {Alert}*', '{Current Date}', '',
     '*Informasi:*', ...info, '',
-    '*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)', '',
+    '*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance: angka + km/m})', '',
     '👤 *Pegawai:* {Employee Status}', '🏢 *Aset:* {Asset Status}', '⚙️ *Operasional:* {Operational Status}', '',
     '*Penanganan:* {Penanganan}', '*Next Step:* {Next Step}', '',
     'Demikian kami laporkan, terima kasih.', '*BCM Command Center*', '', '> `{Incident ID}`',
