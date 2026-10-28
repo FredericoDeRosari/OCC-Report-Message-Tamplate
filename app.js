@@ -3,7 +3,7 @@
 //  • Variabel & format: tersimpan di browser masing-masing (localStorage)
 //  • Masukkan: tersimpan di Firebase Realtime Database (realtime untuk semua)
 // =====================================================================
-import { SLIDES, COMMON_VARS, nowWIB } from './templates.js';
+import { SLIDES, COMMON_VARS, nowWIB, TEMPLATE_VERSION } from './templates.js';
 
 const FIREBASE_VERSION = '10.12.2';
 const M0 = '', M1 = '', M2 = '', ME = ''; // penanda variabel internal
@@ -134,6 +134,7 @@ const encObj = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [encKey
 const decObj = o => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [decKey(k), String(v ?? '')]));
 function decodeShared(s, raw) {
   if (!raw || typeof raw !== 'object') return null;
+  if (raw.ver !== TEMPLATE_VERSION) return null; // default dari versi format lama → abaikan
   const out = { ts: raw.ts, by: raw.by || '' };
   if (s.type === 'group') {
     out.g = decObj(raw.g);
@@ -180,7 +181,8 @@ function build(s, mode, opt = {}) {
     if (mode !== 'raw') {
       tpl = tpl.replace(/LAPORAN \/ UPDATE \{([^{}\n]+)\}( -)?/g, (m, k, dash) => {
         const sc = isComputed(k) ? 'c' : scope;
-        return String(val(s, sc, k)).trim() ? `UPDATE {${k}}${dash || ''}` : 'LAPORAN';
+        const n = String(val(s, sc, k)).trim();
+        return n && !/^0+([.,]0+)?$/.test(n) ? `UPDATE {${k}}${dash || ''}` : 'LAPORAN';
       });
     }
     const out = [];
@@ -351,12 +353,12 @@ function varRow(s, scope, key) {
       <div class="var-actions">
         ${meta.now ? '<button type="button" class="ic" data-act="now" title="Isi waktu sekarang">🕒</button>' : ''}
         <button type="button" class="ic" data-act="reset" title="Kembalikan ke default">↺</button>
-        <button type="button" class="ic" data-act="clear" title="Kosongkan">✕</button>
+        ${meta.strict ? '' : '<button type="button" class="ic" data-act="clear" title="Kosongkan">✕</button>'}
       </div>
     </div>
     <code class="var-key">{${esc(key)}}</code>
     <div class="var-field">
-      <textarea id="${id}" rows="1" class="var-input" spellcheck="false" placeholder="${esc(ph)}">${esc(value)}</textarea>
+      <textarea id="${id}" rows="1" class="var-input${meta.strict ? ' strict' : ''}" spellcheck="false" placeholder="${esc(meta.strict ? 'Pilih salah satu di bawah' : ph)}"${meta.strict ? ' readonly' : ''}>${esc(value)}</textarea>
       <button type="button" class="dirty-ic" data-act="dirty-info" title="Perubahan sementara" aria-label="Perubahan sementara — ketuk untuk info">!</button>
     </div>
     ${meta.options ? `<div class="var-opts">${meta.options.map(o => `<button type="button" class="opt ${String(value) === o ? 'on' : ''}" data-act="opt" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
@@ -720,13 +722,17 @@ app.addEventListener('click', e => {
       return;
     }
     case 'clear-all': {
-      s.keys.forEach(k => setVal(s, 'g', k, ''));
-      if (s.type === 'group') { T(s).items = itemsOf(s).map(() => ({})); normalizeItems(s); }
+      s.keys.forEach(k => { if (!s.metaMap[k].strict) setVal(s, 'g', k, ''); });
+      if (s.type === 'group') {
+        T(s).items = itemsOf(s).map(it => Object.fromEntries(s.itemKeys.filter(k => s.itemMeta[k].strict).map(k => [k, it?.[k] ?? ''])));
+        normalizeItems(s);
+      }
       rerenderVars(); toast('Semua dikosongkan (sementara)'); return;
     }
     case 'add-item': {
       const t = T(s); if (!t.items) t.items = clone(defaultItems(s));
-      t.items.push({}); rerenderVars();
+      t.items.push(Object.fromEntries(s.itemKeys.filter(k => s.itemMeta[k].strict).map(k => [k, String(s.itemMeta[k].def || '')])));
+      rerenderVars();
       const groups = $$('.var-group.item'); const last = groups[groups.length - 1];
       if (last) { last.scrollIntoView({ block: 'start', behavior: 'smooth' }); $('textarea', last)?.focus({ preventScroll: true }); }
       return;
@@ -843,7 +849,7 @@ async function setDefault() {
   const btns = $$('[data-act="set-default"]'); btns.forEach(b => { b.disabled = true; });
   try {
     await FB.mod.set(FB.mod.ref(FB.db, 'defaults/' + s.id), {
-      ...defaultPayload(s), ts: FB.mod.serverTimestamp(), by: String(LS.get('nama', '') || '').slice(0, 40),
+      ...defaultPayload(s), ver: TEMPLATE_VERSION, ts: FB.mod.serverTimestamp(), by: String(LS.get('nama', '') || '').slice(0, 40),
     });
     delete temp[s.id];
     $$('.dirty-pop').forEach(p => p.remove());
