@@ -2,6 +2,11 @@
 //  templates.js — semua format laporan + contoh isian variabel
 //  Cara edit: ubah teks di "tpl" (placeholder ditulis {Nama Variabel}),
 //  lalu isi contoh default-nya di "vars".
+//
+//  Aturan khusus:
+//  • "LAPORAN / UPDATE {Update Number}" → otomatis jadi "LAPORAN" kalau
+//    Update Number kosong, atau "UPDATE 3" kalau diisi 3.
+//  • options: [...] → muncul tombol pilihan cepat di bawah kotak isian.
 // =====================================================================
 
 const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -16,21 +21,29 @@ export function nowWIB() {
   return `${HARI[d.getUTCDay()]}, ${d.getUTCDate()} ${BULAN[d.getUTCMonth()]} ${d.getUTCFullYear()}, Pukul ${hh}:${mm} WIB`;
 }
 
+const STATUS_OPTS = ['Dalam Konfirmasi ⌛', 'Aman ✅', 'Terdampak 🟠'];
+const SIFAT = 'Sifat Laporan: Sebagai Informasi / Eskalasi';
+const DIST = 'Nearest Facility Distance: angka + km/m';
+
 // Variabel yang dipakai di banyak format (label, petunjuk, contoh default)
 export const COMMON_VARS = {
-  'Update Number': { label: 'Nomor Update', hint: 'Urutan laporan / update, contoh: 1', def: '1' },
-  'Alert': { label: 'Alert / Level', hint: 'Contoh: Normal, Waspada, Siaga, Awas', def: 'Waspada' },
+  'Update Number': {
+    label: 'Nomor Update', optional: true, def: '1',
+    hint: 'Kosongkan → judul "LAPORAN". Isi angka → judul "UPDATE 1", "UPDATE 2", dst.',
+  },
+  'Alert': { label: 'Alert / Level', hint: 'Sertakan emoji, contoh: 🟢 Siaga 4', def: '🟢 Siaga 4' },
   'Current Date': { label: 'Tanggal & Waktu Laporan', hint: 'Contoh: Rabu, 1 Juli 2026, Pukul 00:05 WIB', def: nowWIB, now: true },
-  'Nearest Facility Information[0]': { label: 'Aset Terdekat — Nama', hint: 'Nama kantor/fasilitas terdekat', def: 'KCP Kemang Raya' },
-  'Nearest Facility Information[1]': { label: 'Aset Terdekat — Area', hint: 'Area bank dari fasilitas terdekat', def: 'Area Jakarta Selatan' },
-  'Nearest Facility Information[2]': { label: 'Aset Terdekat — Region', hint: 'Region bank dari fasilitas terdekat', def: 'Region Jakarta 1' },
-  'Nearest Facility Distance': { label: 'Jarak ke Aset', hint: 'Angka saja — di template sudah tertulis "km/m"', def: '3,2' },
-  'Employee Status': { label: 'Status Pegawai', def: 'Seluruh pegawai dalam kondisi aman' },
-  'Asset Status': { label: 'Status Aset', def: 'Tidak ada kerusakan pada aset' },
-  'Operational Status': { label: 'Status Operasional', def: 'Operasional berjalan normal' },
-  'Penanganan': { label: 'Penanganan', def: 'Konfirmasi kondisi pegawai dan aset ke PIC unit terdekat' },
-  'Next Step': { label: 'Next Step', def: 'Monitoring perkembangan situasi dan update berkala' },
-  'Incident ID': { label: 'Incident ID', def: 'INC-20261028-0001' },
+  'Nearest Facility Information[0]': { label: 'Aset Terdekat — Nama', hint: 'Nama kantor/fasilitas terdekat', def: 'KCP Gisting' },
+  'Nearest Facility Information[1]': { label: 'Aset Terdekat — Area', hint: 'Huruf kapital, contoh: AREA BANDAR LAMPUNG', def: 'AREA BANDAR LAMPUNG' },
+  'Nearest Facility Information[2]': { label: 'Aset Terdekat — Region', hint: 'Huruf kapital, contoh: REGION II / SUMATERA 2', def: 'REGION II / SUMATERA 2' },
+  'Nearest Facility Distance': { label: 'Jarak ke Aset', hint: 'Angka + satuan, contoh: 6,43 km atau 800 m', def: '6,43 km' },
+  'Employee Status': { label: 'Status Pegawai', def: STATUS_OPTS[0], options: STATUS_OPTS },
+  'Asset Status': { label: 'Status Aset', def: STATUS_OPTS[0], options: STATUS_OPTS },
+  'Operational Status': { label: 'Status Operasional', def: STATUS_OPTS[0], options: STATUS_OPTS },
+  'Penanganan': { label: 'Penanganan', def: 'Proses Call Tree.' },
+  'Next Step': { label: 'Next Step', def: 'Monitor perkembangan situasi.' },
+  'Incident ID': { label: 'Incident ID', def: 'INC-202610281322-553163' },
+  'Sifat Laporan': { label: 'Sifat Laporan', def: 'Sebagai Informasi', options: ['Sebagai Informasi', 'Eskalasi'] },
 };
 
 export const SLIDES = [
@@ -42,7 +55,7 @@ export const SLIDES = [
 
 *Informasi:*
 Episenter {EQK Area} dekat {Nearest Facility Information[1]} ({Nearest Facility Information[2]})
-*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)
+*Aset Terdekat:* {Nearest Facility Information[0]} (± {${DIST}})
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -57,22 +70,16 @@ Demikian kami laporkan, terima kasih.
 
 > \`{Incident ID}\``,
     vars: {
-      'Susulan': { label: 'Susulan (opsional)', hint: 'Isi "Susulan" kalau gempa susulan. Kosongkan kalau bukan.', def: '', ph: 'Susulan', optional: true },
-      'EQK Magnitude': { label: 'Magnitudo', hint: 'Contoh: 5,6', def: '5,6' },
-      'EQK Depth': { label: 'Kedalaman (Km)', def: '10' },
-      'EQK Felt': { label: 'MMI dirasakan', hint: 'Skala MMI terbesar-terkecil, contoh: IV-II', def: 'IV-II' },
-      'EQK Event Time': { label: 'Waktu Kejadian', def: 'Rabu, 28 Oktober 2026, Pukul 11:42 WIB' },
-      'EQK Area': { label: 'Lokasi Episenter', def: '23 km Barat Daya Kab. Sukabumi, Jawa Barat' },
-      'Nearest Facility Information[1]': { def: 'Area Sukabumi' },
-      'Nearest Facility Information[2]': { def: 'Region Bandung' },
-      'Nearest Facility Information[0]': { def: 'KCP Pelabuhan Ratu' },
-      'Nearest Facility Distance': { def: '18' },
-      'EQK Potential': { label: 'Potensi Tsunami', def: 'Tidak berpotensi tsunami (BMKG)' },
-      'Employee Status': { def: 'Seluruh pegawai KCP Pelabuhan Ratu dalam kondisi aman' },
-      'Asset Status': { def: 'Tidak ada kerusakan, hanya retak rambut di dinding pantry' },
-      'Penanganan': { def: 'Konfirmasi kondisi pegawai dan gedung ke Pinca KCP Pelabuhan Ratu' },
-      'Next Step': { def: 'Monitoring gempa susulan dan update berkala setiap 1 jam' },
-      'Incident ID': { def: 'INC-EQK-20261028-001' },
+      'Susulan': { label: 'Susulan (opsional)', hint: 'Isi "Susulan" kalau gempa susulan. Kosongkan kalau bukan.', def: '', ph: 'Susulan', optional: true, options: ['Susulan'] },
+      'EQK Magnitude': { label: 'Magnitudo', hint: 'Pakai titik, contoh: 2.5', def: '2.5' },
+      'EQK Depth': { label: 'Kedalaman (Km)', def: '3' },
+      'EQK Felt': { label: 'MMI dirasakan', hint: 'Terbesar-terkecil, contoh: II atau IV-II', def: 'II' },
+      'EQK Event Time': { label: 'Waktu Kejadian', def: 'Rabu, 21 Oktober 2026, Pukul 18:58 WIB' },
+      'EQK Area': { label: 'Lokasi Episenter', hint: 'Lanjutan kalimat "Episenter …", contoh: berada di darat 9 km utara Tanggamus', def: 'berada di darat 9 km utara Tanggamus' },
+      'EQK Potential': { label: 'Potensi Tsunami', def: 'Tidak Berpotensi Tsunami', options: ['Tidak Berpotensi Tsunami', 'Berpotensi Tsunami'] },
+      'Penanganan': { def: 'Proses Call Tree dan Himbauan untuk siaga gempa susulan.' },
+      'Next Step': { def: 'Monitor gempa susulan dan pengecekan jika terdapat aset yang terdampak.' },
+      'Incident ID': { def: 'INC-202610220807-553163' },
     },
   },
 
@@ -86,7 +93,7 @@ Demikian kami laporkan, terima kasih.
 Terjadi kebakaran {FRE Category} - {FRE Location Name}, {FRE Address}, pada pukul {FRE Event Time} WIB dekat {Nearest Facility Information[1]} ({Nearest Facility Information[2]}).
 *Penyebab:* {FRE Cause}
 
-*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)
+*Aset Terdekat:* {Nearest Facility Information[0]} (± {${DIST}})
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -101,22 +108,19 @@ Demikian kami laporkan, terima kasih.
 
 > \`{Incident ID}\``,
     vars: {
-      'Alert': { def: 'Siaga' },
       'FRE Category': { label: 'Kategori Kebakaran', hint: 'Contoh: Pemukiman, Gedung, Pasar, Kendaraan', def: 'Pemukiman' },
       'FRE Location Name': { label: 'Nama Lokasi', def: 'Permukiman Warga Tanah Tinggi' },
       'FRE Address': { label: 'Alamat', def: 'Jl. Tanah Tinggi II, Johar Baru, Jakarta Pusat' },
       'FRE Event Time': { label: 'Jam Kejadian', hint: 'Jam saja, "WIB" sudah ada di template', def: '10:42' },
-      'Nearest Facility Information[1]': { def: 'Area Jakarta Pusat' },
-      'Nearest Facility Information[2]': { def: 'Region Jakarta 1' },
-      'FRE Cause': { label: 'Penyebab', def: 'Diduga korsleting listrik (masih diselidiki)' },
+      'Nearest Facility Information[1]': { def: 'AREA JAKARTA KRAMAT' },
+      'Nearest Facility Information[2]': { def: 'REGION VI / JAKARTA 1' },
+      'FRE Cause': { label: 'Penyebab', def: 'Dalam Konfirmasi ⌛' },
       'Nearest Facility Information[0]': { def: 'KCP Johar Baru' },
-      'Nearest Facility Distance': { def: '0,4' },
-      'Asset Status': { def: 'Aset tidak terdampak, asap terlihat dari lokasi' },
-      'Operational Status': { def: 'Operasional normal, akses jalan depan kantor dialihkan' },
-      'FRE Status': { label: 'Status Kebakaran', def: 'Dalam penanganan, 14 unit damkar di lokasi' },
-      'Penanganan': { def: 'Koordinasi dengan pengelola gedung dan memastikan jalur evakuasi siap' },
-      'Next Step': { def: 'Monitoring hingga api dinyatakan padam oleh Damkar' },
-      'Incident ID': { def: 'INC-FRE-20261028-004' },
+      'Nearest Facility Distance': { def: '450 m' },
+      'FRE Status': { label: 'Status Kebakaran', hint: 'Contoh: Dalam Penanganan, Pendinginan, Padam', def: 'Dalam Penanganan 🔥' },
+      'Penanganan': { def: 'Proses Call Tree dan koordinasi dengan pengelola gedung terdekat.' },
+      'Next Step': { def: 'Monitor perkembangan kebakaran hingga dinyatakan padam.' },
+      'Incident ID': { def: 'INC-202610281042-118204' },
     },
   },
 
@@ -129,7 +133,7 @@ Demikian kami laporkan, terima kasih.
 *Informasi:*
 Telah terjadi erupsi {ERP Volcano Name} pada pukul {ERP Eruption Time Start} - {ERP Eruption Time End} WIB. Intensitas erupsi dilaporkan {ERP Intensity} dengan awan panas dan abu vulkanik mengarah ke {ERP Ash Direction} dengan rata-rata getaran {ERP Seismic Amplitude} mm sejumlah {ERP Eruption Count} kali selama {ERP Duration: x jam y menit}.
 
-*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)
+*Aset Terdekat:* {Nearest Facility Information[0]} (± {${DIST}})
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -145,7 +149,6 @@ Demikian kami laporkan, terima kasih.
 
 > \`{Incident ID}\``,
     vars: {
-      'Alert': { def: 'Siaga' },
       'ERP Volcano Name': { label: 'Nama Gunung', def: 'Gunung Semeru' },
       'ERP Eruption Time Start': { label: 'Jam Mulai Erupsi', def: '05:12' },
       'ERP Eruption Time End': { label: 'Jam Selesai Erupsi', def: '07:40' },
@@ -155,13 +158,12 @@ Demikian kami laporkan, terima kasih.
       'ERP Eruption Count': { label: 'Jumlah Erupsi', def: '4' },
       'ERP Duration': { label: 'Durasi', hint: 'Format: x jam y menit', def: '2 jam 28 menit' },
       'Nearest Facility Information[0]': { def: 'KCP Lumajang' },
-      'Nearest Facility Distance': { def: '32' },
-      'Asset Status': { def: 'Abu tipis di area parkir, tidak ada kerusakan' },
+      'Nearest Facility Distance': { def: '32,10 km' },
       'ERP Volcano Status': { label: 'Status Gunung', def: 'Level III (Siaga)' },
-      'Penanganan': { def: 'Membagikan masker ke pegawai dan membersihkan abu di area kantor' },
-      'Next Step': { def: 'Monitoring aktivitas vulkanik melalui PVMBG / MAGMA' },
-      'ERP Recommendations': { label: 'Rekomendasi', def: 'Tidak beraktivitas dalam radius 5 km dari kawah dan 13 km di sektor tenggara; gunakan masker saat hujan abu' },
-      'Incident ID': { def: 'INC-ERP-20261028-002' },
+      'Penanganan': { def: 'Proses Call Tree dan himbauan penggunaan masker di area terdampak abu.' },
+      'Next Step': { def: 'Monitor aktivitas vulkanik melalui PVMBG / MAGMA Indonesia.' },
+      'ERP Recommendations': { label: 'Rekomendasi', def: 'Tidak beraktivitas dalam radius 5 km dari kawah dan 13 km di sektor tenggara; gunakan masker saat hujan abu.' },
+      'Incident ID': { def: 'INC-202610280512-204417' },
     },
   },
 
@@ -194,16 +196,13 @@ Demikian kami laporkan, terima kasih.
       'ELC Event Details': { label: 'Detail Kejadian', def: 'gangguan pada panel LVMDP sehingga lantai 3–5 padam' },
       'ELC Cause': { label: 'Penyebab', def: 'trip pada trafo distribusi PLN' },
       'Impacted Facilities Code → Facility Name Bank Area (Bank Region)': {
-        label: 'Aset Terdampak', hint: 'Format: Kode → Nama Fasilitas Area Bank (Region Bank). Boleh lebih dari 1 baris.',
-        def: 'KC0123 → KC Surabaya Darmo Area Surabaya (Region Jawa Timur)',
+        label: 'Aset Terdampak', hint: 'Format: Kode → Nama Fasilitas AREA (REGION). Boleh lebih dari 1 baris.',
+        def: 'KC0123 → KC Surabaya Darmo AREA SURABAYA (REGION VIII / JAWA 3)',
       },
-      'Employee Status': { def: 'Seluruh pegawai aman, sebagian pindah ke lantai 1–2' },
-      'Asset Status': { def: 'Genset beroperasi, UPS ruang server normal' },
-      'Operational Status': { def: 'Layanan nasabah tetap berjalan dengan genset' },
       'ELC Event Time End - ELC Event Time Start': { label: 'Durasi Gangguan', hint: 'Waktu selesai − waktu mulai', def: '1 jam 15 menit (09:05 – 10:20 WIB)' },
-      'Penanganan': { def: 'Mengaktifkan genset dan koordinasi dengan PLN UP3 Surabaya' },
-      'Next Step': { def: 'Memastikan suplai PLN stabil sebelum kembali dari genset' },
-      'Incident ID': { def: 'INC-ELC-20261028-007' },
+      'Penanganan': { def: 'Proses Call Tree dan aktivasi genset.' },
+      'Next Step': { def: 'Monitor pemulihan suplai listrik PLN.' },
+      'Incident ID': { def: 'INC-202610280905-337120' },
     },
   },
 
@@ -231,20 +230,17 @@ Demikian kami laporkan, terima kasih.
 
 > \`{Incident ID}\``,
     vars: {
-      'Alert': { def: 'Siaga' },
       'BLK Location Area': { label: 'Area Pemadaman', def: 'Jakarta Barat, Tangerang, dan Tangerang Selatan' },
       'BLK Event Time Start': { label: 'Jam Mulai Padam', def: '19:40' },
       'BLK Cause': { label: 'Penyebab', def: 'gangguan pada jaringan transmisi SUTET 500 kV' },
       'Impacted Facilities Code → Facility Name Bank Area (Bank Region)': {
-        label: 'Aset Terdampak', hint: 'Format: Kode → Nama Fasilitas Area Bank (Region Bank). Satu baris per aset.',
-        def: 'KC0456 → KC Daan Mogot Area Jakarta Barat (Region Jakarta 2)\nKC0789 → KC BSD Area Tangerang (Region Jakarta 3)',
+        label: 'Aset Terdampak', hint: 'Format: Kode → Nama Fasilitas AREA (REGION). Satu baris per aset.',
+        def: 'KC0456 → KC Daan Mogot AREA JAKARTA DAAN MOGOT (REGION VI / JAKARTA 2)\nKC0789 → KC BSD AREA TANGERANG (REGION VI / JAKARTA 3)',
       },
-      'Asset Status': { def: 'Genset di 2 KC beroperasi normal' },
-      'Operational Status': { def: 'ATM di 6 lokasi offline, layanan cabang memakai genset' },
       'BLK Estimated Duration': { label: 'Estimasi Durasi', hint: 'Format: x jam y menit', def: '2 jam 30 menit' },
-      'Penanganan': { def: 'Monitoring genset dan stok BBM di cabang terdampak' },
-      'Next Step': { def: 'Update berkala hingga listrik PLN pulih' },
-      'Incident ID': { def: 'INC-BLK-20261028-003' },
+      'Penanganan': { def: 'Proses Call Tree dan monitoring genset serta BBM di unit terdampak.' },
+      'Next Step': { def: 'Monitor pemulihan listrik PLN dan update berkala.' },
+      'Incident ID': { def: 'INC-202610281940-702251' },
     },
   },
 
@@ -257,7 +253,7 @@ Demikian kami laporkan, terima kasih.
 *Informasi:*
 Terjadi banjir di {FLD Location Area}, {FLD Address} pada pukul {FLD Event Time} WIB dengan kedalaman {FLD Water Depth} cm ({FLD Water Trend}). Penyebab banjir {FLD Cause}. Saat ini cuaca di sekitar terpantau {FLD Weather}.
 
-*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)
+*Aset Terdekat:* {Nearest Facility Information[0]} (± {${DIST}})
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -276,24 +272,22 @@ Demikian kami laporkan, terima kasih.
       'FLD Address': { label: 'Alamat', def: 'Jl. Jatinegara Barat, Jakarta Timur' },
       'FLD Event Time': { label: 'Jam Kejadian', def: '05:30' },
       'FLD Water Depth': { label: 'Kedalaman Air (cm)', def: '40-60' },
-      'FLD Water Trend': { label: 'Tren Air', hint: 'Contoh: cenderung naik, stagnan, mulai surut', def: 'cenderung naik' },
+      'FLD Water Trend': { label: 'Tren Air', def: 'cenderung naik', options: ['cenderung naik', 'stagnan', 'mulai surut'] },
       'FLD Cause': { label: 'Penyebab', def: 'luapan Kali Ciliwung akibat hujan di hulu' },
       'FLD Weather': { label: 'Cuaca', def: 'hujan ringan' },
       'Nearest Facility Information[0]': { def: 'KCP Jatinegara' },
-      'Nearest Facility Distance': { def: '0,7' },
-      'Asset Status': { def: 'Air belum masuk ke dalam gedung' },
-      'Operational Status': { def: 'Operasional normal, sebagian pegawai terlambat' },
+      'Nearest Facility Distance': { def: '700 m' },
       'FLD Status': { label: 'Status Banjir', def: 'Air masih menggenang, Bendung Katulampa Siaga 3' },
-      'Penanganan': { def: 'Menyiapkan karung pasir dan memindahkan dokumen ke lantai 2' },
-      'Next Step': { def: 'Monitoring ketinggian air setiap 2 jam' },
-      'Incident ID': { def: 'INC-FLD-20261028-009' },
+      'Penanganan': { def: 'Proses Call Tree dan persiapan pengamanan dokumen serta aset.' },
+      'Next Step': { def: 'Monitor ketinggian air dan pengecekan jika terdapat aset yang terdampak.' },
+      'Incident ID': { def: 'INC-202610280530-415590' },
     },
   },
 
   // ----------------------------------------------------------------- TAIFUN
   {
     id: 'taifun', title: 'Taifun', icon: '🌀', accent: '#2dd4bf',
-    tpl: `*LAPORAN / UPDATE {Update Number} Taifun {TYP Typhoon Name} | {Alert} - Sebagai Informasi / Eskalasi*
+    tpl: `*LAPORAN / UPDATE {Update Number} Taifun {TYP Typhoon Name} | {Alert} - {${SIFAT}}*
 {Current Date}
 
 Yth.
@@ -307,7 +301,7 @@ Pak Aris,
 4. Operational Remittance Office (RO) {TYP RO Follow Up}.
 5. {TYP Employee Condition}
 
-*Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)
+*Aset Terdekat:* {Nearest Facility Information[0]} (± {${DIST}})
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -330,12 +324,10 @@ Demikian kami laporkan, terima kasih.
       'TYP RO Follow Up': { label: 'Tindak Lanjut RO', def: 'Hong Kong akan dibuka kembali pukul 14:00 waktu setempat' },
       'TYP Employee Condition': { label: 'Kondisi Pegawai', def: 'Seluruh pegawai RO Hong Kong dalam kondisi aman.' },
       'Nearest Facility Information[0]': { def: 'Remittance Office Hong Kong' },
-      'Nearest Facility Distance': { def: '45' },
-      'Asset Status': { def: 'Tidak ada kerusakan pada kantor RO' },
-      'Operational Status': { def: 'RO tutup sementara, buka kembali pukul 14:00' },
-      'Penanganan': { def: 'Komunikasi intensif dengan Kepala RO Hong Kong' },
-      'Next Step': { def: 'Monitoring update Hong Kong Observatory' },
-      'Incident ID': { def: 'INC-TYP-20261028-001' },
+      'Nearest Facility Distance': { def: '45 km' },
+      'Penanganan': { def: 'Proses Call Tree dengan Kepala RO Hong Kong.' },
+      'Next Step': { def: 'Monitor update dari Hong Kong Observatory.' },
+      'Incident ID': { def: 'INC-202610280600-990134' },
     },
   },
 
@@ -343,7 +335,7 @@ Demikian kami laporkan, terima kasih.
   {
     id: 'unjuk-rasa', type: 'group', title: 'Unjuk Rasa', icon: '📢', accent: '#c084fc',
     note: 'Gabungan dari iView dashboard',
-    tpl: `*LAPORAN / UPDATE {Update Number terbesar} Situasi Unjuk Rasa | {Alert semua incident, dedup " - "}*
+    tpl: `*LAPORAN / UPDATE {Update Number terbesar} - Situasi Unjuk Rasa | {Alert semua incident, dedup " - "} - {${SIFAT}}*
 {Current Date}
 
 *Informasi:*
@@ -363,7 +355,7 @@ Demikian kami laporkan, terima kasih.
 - *Unsur:* {DMO Involved Groups}
 - *Tuntutan:* _({DMO Type})_ - {DMO Issue Demands}
 - *Kondisi:* {DMO Situation}
-- *Aset Terdekat:* {Nearest Facility Information[0]} (± {Nearest Facility Distance} km/m)`,
+- *Aset Terdekat:* {Nearest Facility Information[0]} (± {${DIST}})`,
     // field per lokasi yang tidak tampil di blok lokasi, tapi dipakai header/footer
     itemExtra: ['Update Number', 'Alert', 'Next Step', 'Incident ID'],
     computed: {
@@ -373,10 +365,10 @@ Demikian kami laporkan, terima kasih.
         return [...items].reverse().map(i => (i['Update Number'] || '').trim()).find(Boolean) || '';
       },
       'Alert semua incident, dedup " - "': items => uniq(items.map(i => i['Alert'])).join(' - '),
-      'Next Step semua incident, dedup': items => uniq(items.map(i => i['Next Step'])).join('; '),
+      'Next Step semua incident, dedup': items => uniq(items.map(i => i['Next Step'])).join(' '),
     },
     computedLabels: {
-      'Update Number terbesar': 'Update Number (terbesar)',
+      'Update Number terbesar': 'Update Number (terbesar · kosong semua → LAPORAN)',
       'Alert semua incident, dedup " - "': 'Alert (gabungan, tanpa duplikat)',
       'Next Step semua incident, dedup': 'Next Step (gabungan, tanpa duplikat)',
     },
@@ -400,20 +392,20 @@ Demikian kami laporkan, terima kasih.
     },
     defaultItems: [
       {
-        'Update Number': '2', 'Alert': 'Waspada', 'Next Step': 'Monitoring pergerakan massa hingga aksi selesai', 'Incident ID': 'INC-DMO-20261028-011',
+        'Update Number': '2', 'Alert': '🟢 Siaga 4', 'Next Step': 'Monitor pergerakan massa hingga aksi selesai.', 'Incident ID': 'INC-202610281300-551204',
         'DMO Location Name': 'Gedung DPR/MPR RI, Jl. Gatot Subroto', 'DMO Status': 'Berlangsung',
-        'Nearest Facility Information[1]': 'Area Jakarta Senayan', 'Nearest Facility Information[2]': 'Region Jakarta 1',
+        'Nearest Facility Information[1]': 'AREA JAKARTA SENAYAN', 'Nearest Facility Information[2]': 'REGION VI / JAKARTA 1',
         'DMO Event Time': '13:00 WIB', 'DMO Crowd Size': '1.500', 'DMO Involved Groups': 'Aliansi buruh dan mahasiswa',
         'DMO Type': 'Ketenagakerjaan', 'DMO Issue Demands': 'Kenaikan upah minimum 2027', 'DMO Situation': 'Kondusif, dijaga aparat gabungan',
-        'Nearest Facility Information[0]': 'KCP Senayan', 'Nearest Facility Distance': '0,9',
+        'Nearest Facility Information[0]': 'KCP Senayan', [DIST]: '900 m',
       },
       {
-        'Update Number': '3', 'Alert': 'Siaga', 'Next Step': 'Monitoring pergerakan massa hingga aksi selesai', 'Incident ID': 'INC-DMO-20261028-012',
+        'Update Number': '3', 'Alert': '🟢 Siaga 4', 'Next Step': 'Monitor pergerakan massa hingga aksi selesai.', 'Incident ID': 'INC-202610281430-551219',
         'DMO Location Name': 'Patung Kuda, Jl. Medan Merdeka Barat', 'DMO Status': 'Massa bertambah',
-        'Nearest Facility Information[1]': 'Area Jakarta Pusat', 'Nearest Facility Information[2]': 'Region Jakarta 1',
+        'Nearest Facility Information[1]': 'AREA JAKARTA THAMRIN', 'Nearest Facility Information[2]': 'REGION VI / JAKARTA 1',
         'DMO Event Time': '14:30 WIB', 'DMO Crowd Size': '800', 'DMO Involved Groups': 'Gabungan organisasi masyarakat',
         'DMO Type': 'Kebijakan Publik', 'DMO Issue Demands': 'Penolakan kenaikan tarif transportasi umum', 'DMO Situation': 'Lalu lintas dialihkan, situasi ramai lancar',
-        'Nearest Facility Information[0]': 'KC Thamrin', 'Nearest Facility Distance': '1,2',
+        'Nearest Facility Information[0]': 'KC Thamrin', [DIST]: '1,2 km',
       },
     ],
   },
