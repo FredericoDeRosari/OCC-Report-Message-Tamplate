@@ -64,40 +64,95 @@ for (const s of SLIDES) {
   }
 }
 
-// ------------------------------------------------------------ nilai variabel (lokal)
-const valsCache = {};
-function getVals(s) {
-  if (valsCache[s.id]) return valsCache[s.id];
-  let v = LS.get('vals:' + s.id, null);
-  if (!v || typeof v !== 'object') v = {};
-  if (s.type === 'group') {
-    if (!v.g || typeof v.g !== 'object') v.g = {};
-    if (!Array.isArray(v.items)) v.items = clone(s.defaultItems);
-  }
-  return (valsCache[s.id] = v);
-}
-let saveTimer;
-function saveVals(s) { clearTimeout(saveTimer); saveTimer = setTimeout(() => LS.set('vals:' + s.id, valsCache[s.id]), 250); }
-function val(s, scope, key) {
-  const v = getVals(s);
-  if (s.type === 'group') {
-    if (scope === 'c') return s.computed[key](v.items);
-    if (scope === 'g') return v.g[key] ?? s.defaults[key] ?? '';
-    return v.items[+scope]?.[key] ?? '';
-  }
-  return v[key] ?? s.defaults[key] ?? '';
-}
+// ------------------------------------------------------------ nilai variabel
+//  default  = milik bersama, tersimpan di Firebase (path: defaults/<slide>)
+//  temp     = perubahan sementara milik orang ini (hilang saat refresh)
+const temp = {};
+const shared = {};          // hasil decode dari Firebase: { v | g, items, ts, by }
+let sharedLoaded = false;
+const T = s => temp[s.id] || (temp[s.id] = s.type === 'group' ? { g: {}, items: null } : {});
+const bagOf = s => (s.type === 'group' ? T(s).g : T(s));
+const defaultItems = s => shared[s.id]?.items || s.defaultItems;
+const itemsOf = s => T(s).items || defaultItems(s);
 function defaultOf(s, scope, key) {
-  if (scope === 'g') return s.defaults[key] ?? '';
-  return s.defaultItems?.[+scope]?.[key] ?? '';
+  if (scope === 'g') {
+    const sh = shared[s.id]; const bag = sh && (s.type === 'group' ? sh.g : sh.v);
+    if (bag && key in bag) return bag[key];
+    return s.defaults[key] ?? '';
+  }
+  return defaultItems(s)[+scope]?.[key] ?? '';
+}
+const builtinOf = (s, scope, key) => (scope === 'g' ? (s.defaults[key] ?? '') : (s.defaultItems?.[+scope]?.[key] ?? ''));
+function val(s, scope, key) {
+  if (scope === 'c') return s.computed[key](itemsOf(s));
+  if (scope === 'g') return bagOf(s)[key] ?? defaultOf(s, 'g', key);
+  return itemsOf(s)[+scope]?.[key] ?? '';
 }
 function setVal(s, scope, key, value) {
-  const v = getVals(s);
+  if (scope === 'g') {
+    const bag = bagOf(s);
+    if (value === defaultOf(s, 'g', key)) delete bag[key]; else bag[key] = value;
+    return;
+  }
+  const t = T(s);
+  if (!t.items) t.items = clone(defaultItems(s));
+  if (t.items[+scope]) t.items[+scope][key] = value;
+  normalizeItems(s);
+}
+const flatItems = (s, arr) => JSON.stringify(arr.map(it => s.itemKeys.map(k => it?.[k] ?? '')));
+function normalizeItems(s) {
+  const t = T(s);
+  if (t.items && flatItems(s, t.items) === flatItems(s, defaultItems(s))) t.items = null;
+}
+function isDirty(s, scope, key) {
+  if (scope === 'c') return false;
+  if (scope === 'g') { const bag = bagOf(s); return key in bag && bag[key] !== defaultOf(s, 'g', key); }
+  const t = T(s); if (!t.items) return false;
+  return (t.items[+scope]?.[key] ?? '') !== (defaultItems(s)[+scope]?.[key] ?? '');
+}
+function changeCount(s) {
+  if (!s || s.type === 'request') return 0;
+  let n = s.keys.filter(k => isDirty(s, 'g', k)).length;
+  const t = T(s);
+  if (s.type === 'group' && t.items) {
+    t.items.forEach((it, i) => s.itemKeys.forEach(k => { if (isDirty(s, String(i), k)) n++; }));
+    n += Math.abs(t.items.length - defaultItems(s).length);
+  }
+  return n;
+}
+// Setelah default bersama berubah: buang perubahan sementara yang ternyata sudah sama
+function pruneTemp(s) {
+  if (!temp[s.id]) return;
+  const bag = bagOf(s);
+  for (const k of Object.keys(bag)) if (bag[k] === defaultOf(s, 'g', k)) delete bag[k];
+  if (s.type === 'group') normalizeItems(s);
+}
+// Key Firebase tidak boleh berisi . # $ [ ] /
+const encKey = k => k.replace(/[.#$[\]/%]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+const decKey = k => k.replace(/%([0-9A-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+const encObj = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [encKey(k), String(v ?? '')]));
+const decObj = o => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [decKey(k), String(v ?? '')]));
+function decodeShared(s, raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = { ts: raw.ts, by: raw.by || '' };
   if (s.type === 'group') {
-    if (scope === 'g') v.g[key] = value;
-    else if (v.items[+scope]) v.items[+scope][key] = value;
-  } else v[key] = value;
-  saveVals(s);
+    out.g = decObj(raw.g);
+    const n = typeof raw.n === 'number' ? raw.n : 0;
+    out.items = Array.from({ length: n }, (_, i) => decObj(raw.items?.[i]));
+  } else out.v = decObj(raw.v);
+  return out;
+}
+function defaultPayload(s) {
+  const sh = shared[s.id]; const shBag = sh && (s.type === 'group' ? sh.g : sh.v);
+  const g = {};
+  for (const k of s.keys) {
+    // var waktu otomatis (Current Date) tidak dibekukan kecuali memang diubah
+    if (s.metaMap[k].now && !isDirty(s, 'g', k) && !(shBag && k in shBag)) continue;
+    g[k] = val(s, 'g', k);
+  }
+  if (s.type !== 'group') return { v: encObj(g) };
+  const items = itemsOf(s).map(it => encObj(Object.fromEntries(s.itemKeys.map(k => [k, it?.[k] ?? '']))));
+  return { g: encObj(g), items, n: items.length };
 }
 
 // ------------------------------------------------------------ mesin template
@@ -107,7 +162,6 @@ function setVal(s, scope, key, value) {
  */
 function build(s, mode, opt = {}) {
   const refs = [];
-  const v = getVals(s);
   const noMark = mode === 'plain' || opt.noMark;
   const mark = (scope, key, text) => {
     if (noMark) return text;
@@ -140,7 +194,7 @@ function build(s, mode, opt = {}) {
 
   let text = fill(s.tpl, 'g');
   if (s.type === 'group') {
-    const items = v.items;
+    const items = itemsOf(s);
     let block, ids;
     if (mode === 'raw') {
       block = [0, 1].map(i => fill(s.itemTpl.replace('{No}', i + 1), String(i))).join('\n\n') + '\n\n3. ...';
@@ -282,25 +336,28 @@ function viewSwitch(s, compact) {
 function varRow(s, scope, key) {
   const meta = scope === 'g' ? s.metaMap[key] : s.itemMeta[key];
   const value = val(s, scope, key);
-  const ph = meta.ph || defaultOf(s, scope, key) || (scope !== 'g' ? (s.defaultItems?.[0]?.[key] || '') : '') || meta.hint || '';
+  const ph = meta.ph || builtinOf(s, scope, key) || (scope !== 'g' ? (s.defaultItems?.[0]?.[key] || '') : '') || meta.hint || '';
   const id = 'v' + (++uid);
-  return `<div class="var" data-scope="${scope}" data-k="${esc(key)}">
+  return `<div class="var ${isDirty(s, scope, key) ? 'dirty' : ''}" data-scope="${scope}" data-k="${esc(key)}">
     <div class="var-top">
       <label class="var-label" for="${id}">${esc(meta.label)}</label>
       <div class="var-actions">
         ${meta.now ? '<button type="button" class="ic" data-act="now" title="Isi waktu sekarang">🕒</button>' : ''}
-        <button type="button" class="ic" data-act="reset" title="Kembalikan ke contoh">↺</button>
+        <button type="button" class="ic" data-act="reset" title="Kembalikan ke default">↺</button>
         <button type="button" class="ic" data-act="clear" title="Kosongkan">✕</button>
       </div>
     </div>
     <code class="var-key">{${esc(key)}}</code>
-    <textarea id="${id}" rows="1" class="var-input" spellcheck="false" placeholder="${esc(ph)}">${esc(value)}</textarea>
+    <div class="var-field">
+      <textarea id="${id}" rows="1" class="var-input" spellcheck="false" placeholder="${esc(ph)}">${esc(value)}</textarea>
+      <button type="button" class="dirty-ic" data-act="dirty-info" title="Perubahan sementara" aria-label="Perubahan sementara — ketuk untuk info">!</button>
+    </div>
     ${meta.hint ? `<div class="var-hint">${esc(meta.hint)}</div>` : ''}
   </div>`;
 }
 function varsHTML(s) {
   if (s.type !== 'group') return s.keys.map(k => varRow(s, 'g', k)).join('');
-  const v = getVals(s);
+  const items = itemsOf(s), nDef = defaultItems(s).length;
   let h = `<div class="var-group"><div class="vg-title">Umum</div>${s.keys.map(k => varRow(s, 'g', k)).join('')}</div>`;
   h += `<div class="var-group computed"><div class="vg-title">Otomatis dari daftar lokasi</div>${Object.keys(s.computed).map(k => `
     <div class="var comp" data-scope="c" data-k="${esc(k)}">
@@ -308,14 +365,22 @@ function varsHTML(s) {
       <code class="var-key">{${esc(k)}}</code>
       <div class="computed-val" data-k="${esc(k)}"></div>
     </div>`).join('')}</div>`;
-  h += v.items.map((it, i) => `<div class="var-group item">
-      <div class="vg-title">📍 Lokasi ${i + 1}<button type="button" class="btn sm ghost danger" data-act="del-item" data-i="${i}">Hapus</button></div>
+  h += items.map((it, i) => `<div class="var-group item">
+      <div class="vg-title"><span>📍 Lokasi ${i + 1}${i >= nDef ? ' <span class="tag warn">baru · sementara</span>' : ''}</span><button type="button" class="btn sm ghost danger" data-act="del-item" data-i="${i}">Hapus</button></div>
       ${s.itemKeys.map(k => varRow(s, String(i), k)).join('')}
     </div>`).join('');
   h += '<button type="button" class="btn add-item" data-act="add-item">＋ Tambah lokasi</button>';
   return h;
 }
-const varCount = s => s.type === 'group' ? `${s.keys.length} umum · ${getVals(s).items.length} lokasi` : `${s.keys.length} variabel`;
+const varCount = s => s.type === 'group' ? `${s.keys.length} umum · ${itemsOf(s).length} lokasi` : `${s.keys.length} variabel`;
+const varsFootHTML = () => `<div class="vars-foot" id="varsFoot">
+    <div class="vf-info"><span class="vf-count"></span><small class="vf-meta"></small></div>
+    <div class="vf-btns">
+      <button type="button" class="btn sm ghost" data-act="load-builtin" title="Isi semua dengan contoh bawaan (sementara)">Contoh bawaan</button>
+      <button type="button" class="btn primary vf-save" data-act="set-default" title="Simpan isian sekarang sebagai default untuk semua orang">💾 Set to Default</button>
+    </div>
+  </div>`;
+const varsNote = '<p class="note">✏️ Perubahan bersifat <b>sementara</b> (ditandai <span class="dirty-ic demo">!</span>). Tekan <b>Set to Default</b> di bawah untuk menyimpan sebagai default bersama.</p>';
 
 function formHTML(s) {
   const req = s.type === 'request';
@@ -357,8 +422,9 @@ function desktopBody(s) {
     </section>
     <section class="panel p-vars">
       <div class="panel-head"><span class="pdot"></span><h2>Input Variabel</h2><span class="sub" id="varCount">${varCount(s)}</span>
-        <div class="head-actions"><button type="button" class="btn sm ghost" data-act="reset-all" title="Kembalikan semua ke contoh">↺ Contoh</button><button type="button" class="btn sm ghost" data-act="clear-all" title="Kosongkan semua">✕ Kosongkan</button></div></div>
-      <div class="panel-body"><p class="note">💾 Tersimpan di browser kamu saja. Semua isian berupa teks.</p><div id="vars" class="vars">${varsHTML(s)}</div></div>
+        <div class="head-actions"><button type="button" class="btn sm ghost" data-act="reset-all" title="Batalkan semua perubahan sementara">↺ Batalkan</button><button type="button" class="btn sm ghost" data-act="clear-all" title="Kosongkan semua">✕ Kosongkan</button></div></div>
+      <div class="panel-body">${varsNote}<div id="vars" class="vars">${varsHTML(s)}</div></div>
+      ${varsFootHTML()}
     </section>
   </div>
   ${feedbackHTML(s)}`;
@@ -388,10 +454,12 @@ function mobileBody(s) {
   return `${mobileFormatHTML(s)}
   <section class="card m-vars">
     <div class="card-head">
-      <div><h2>Variabel <span class="sub" id="varCount">${varCount(s)}</span></h2><small>Semua isian teks · tersimpan di HP ini saja</small></div>
-      <div class="head-actions"><button type="button" class="btn sm ghost" data-act="reset-all">↺ Contoh</button><button type="button" class="btn sm ghost" data-act="clear-all">✕</button></div>
+      <div><h2>Variabel <span class="sub" id="varCount">${varCount(s)}</span></h2><small>Semua isian berupa teks</small></div>
+      <div class="head-actions"><button type="button" class="btn sm ghost" data-act="reset-all" title="Batalkan semua perubahan">↺ Batalkan</button><button type="button" class="btn sm ghost" data-act="clear-all" title="Kosongkan semua">✕</button></div>
     </div>
+    ${varsNote}
     <div id="vars" class="vars">${varsHTML(s)}</div>
+    ${varsFootHTML()}
   </section>
   ${feedbackHTML(s)}`;
 }
@@ -458,7 +526,7 @@ function renderSlide(dir) {
   const anim = dir > 0 ? 'anim-next' : dir < 0 ? 'anim-prev' : 'anim-fade';
   const body = s.type === 'request' ? requestHTML(s) : (state.view === 'desktop' ? desktopBody(s) : mobileBody(s));
   app.innerHTML = state.view === 'desktop' ? desktopShell(s, prev, next, body, anim) : mobileShell(s, prev, next, body, anim);
-  if (s.type !== 'request') { renderPreviews(); growAll(); }
+  if (s.type !== 'request') { renderPreviews(); growAll(); updateVarsFoot(); }
   subscribe(s.id);
   renderFb(); updateConn();
   window.scrollTo(0, 0);
@@ -518,7 +586,43 @@ function rerenderVars() {
   const s = cur(), box = $('#vars'); if (!box) return;
   box.innerHTML = varsHTML(s);
   const vc = $('#varCount'); if (vc) vc.textContent = varCount(s);
-  growAll(); renderPreviews();
+  growAll(); renderPreviews(); updateVarsFoot();
+}
+function markRow(row) {
+  const d = isDirty(cur(), row.dataset.scope, row.dataset.k);
+  row.classList.toggle('dirty', d);
+  if (!d) $('.dirty-pop', row)?.remove();
+}
+function markAllRows() { $$('#vars .var').forEach(markRow); updateVarsFoot(); }
+// Default bersama berubah (dari orang lain / setelah Set to Default)
+function syncInputs() {
+  const s = cur(); if (!s || s.type === 'request' || !$('#vars')) return;
+  if (s.type === 'group' && $$('#vars .var-group.item').length !== itemsOf(s).length) { rerenderVars(); return; }
+  $$('#vars .var').forEach(row => {
+    if (row.dataset.scope === 'c') return;
+    const ta = $('textarea', row);
+    if (ta && document.activeElement !== ta) {
+      const v = String(val(s, row.dataset.scope, row.dataset.k));
+      if (ta.value !== v) { ta.value = v; grow(ta); }
+    }
+    markRow(row);
+  });
+  renderPreviews(); updateVarsFoot();
+}
+function updateVarsFoot() {
+  const el = $('#varsFoot'); const s = cur(); if (!el || !s || s.type === 'request') return;
+  const n = changeCount(s);
+  $('.vf-count', el).innerHTML = n ? `<span class="dirty-ic demo">!</span> <b>${n}</b> perubahan sementara` : '✓ Sesuai default';
+  el.classList.toggle('has-changes', n > 0);
+  const sh = shared[s.id];
+  let meta;
+  if (FB.status === 'unconfigured') meta = 'Default bawaan · Firebase belum disetel';
+  else if (FB.status !== 'ready') meta = FB.status === 'error' ? 'Default bawaan · Firebase error' : 'Menghubungkan…';
+  else if (FB.defErr) meta = '⚠️ Tidak bisa membaca default — perbarui Rules Firebase';
+  else if (!sharedLoaded) meta = 'Memuat default bersama…';
+  else if (sh?.ts) meta = `Default terakhir disimpan${sh.by ? ' oleh ' + sh.by : ''} · ${relTime(sh.ts)}`;
+  else meta = 'Masih contoh bawaan (belum pernah di-set)';
+  $('.vf-meta', el).textContent = meta;
 }
 function findRow(scope, key) { return $$('#vars .var').find(r => r.dataset.scope === scope && r.dataset.k === key); }
 function focusVar(ref) {
@@ -576,28 +680,52 @@ app.addEventListener('click', e => {
       if (!row) return;
       const ta = $('textarea', row);
       ta.value = act === 'clear' ? '' : act === 'now' ? nowWIB() : defaultOf(s, row.dataset.scope, row.dataset.k);
-      setVal(s, row.dataset.scope, row.dataset.k, ta.value); grow(ta); schedule(); ta.focus();
+      setVal(s, row.dataset.scope, row.dataset.k, ta.value); grow(ta); markAllRows(); schedule(); ta.focus();
       return;
     }
+    case 'dirty-info': {
+      if (!row) return;
+      const open = $('.dirty-pop', row);
+      $$('.dirty-pop').forEach(p => p.remove());
+      if (open) return;
+      const d = String(defaultOf(s, row.dataset.scope, row.dataset.k));
+      $('.var-field', row).insertAdjacentHTML('beforeend', `<div class="dirty-pop" role="dialog">
+        <div class="dp-msg"><b>Perubahan sementara</b>, <b>Set to Default</b> jika ingin menyimpan.</div>
+        <div class="dp-def">Default saat ini: <span>${d ? esc(d) : '<i>(kosong)</i>'}</span></div>
+        <div class="dp-act"><button type="button" class="btn sm ghost" data-act="reset">↺ Batalkan</button><button type="button" class="btn sm primary" data-act="set-default">💾 Set to Default</button></div>
+      </div>`);
+      $('.dirty-pop', row).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    case 'set-default': setDefault(); return;
     case 'reset-all':
-      if (!confirm('Kembalikan semua variabel di slide ini ke contoh?')) return;
-      delete valsCache[s.id]; LS.del('vals:' + s.id); rerenderVars(); toast('Dikembalikan ke contoh'); return;
+      if (!changeCount(s)) { toast('Tidak ada perubahan — sudah sesuai default'); return; }
+      if (!confirm('Batalkan semua perubahan sementara di slide ini?')) return;
+      delete temp[s.id]; rerenderVars(); toast('Kembali ke default'); return;
+    case 'load-builtin': {
+      s.keys.forEach(k => setVal(s, 'g', k, builtinOf(s, 'g', k)));
+      if (s.type === 'group') { T(s).items = clone(s.defaultItems); normalizeItems(s); }
+      rerenderVars();
+      toast(changeCount(s) ? 'Contoh bawaan dimuat (sementara) — tekan Set to Default untuk menyimpan' : 'Default sudah sama dengan contoh bawaan');
+      return;
+    }
     case 'clear-all': {
-      const v = getVals(s);
-      if (s.type === 'group') { s.keys.forEach(k => { v.g[k] = ''; }); v.items.forEach(it => s.itemKeys.forEach(k => { it[k] = ''; })); }
-      else s.keys.forEach(k => { v[k] = ''; });
-      saveVals(s); rerenderVars(); toast('Semua variabel dikosongkan'); return;
+      s.keys.forEach(k => setVal(s, 'g', k, ''));
+      if (s.type === 'group') { T(s).items = itemsOf(s).map(() => ({})); normalizeItems(s); }
+      rerenderVars(); toast('Semua dikosongkan (sementara)'); return;
     }
     case 'add-item': {
-      const v = getVals(s); v.items.push({}); saveVals(s); rerenderVars();
+      const t = T(s); if (!t.items) t.items = clone(defaultItems(s));
+      t.items.push({}); rerenderVars();
       const groups = $$('.var-group.item'); const last = groups[groups.length - 1];
       if (last) { last.scrollIntoView({ block: 'start', behavior: 'smooth' }); $('textarea', last)?.focus({ preventScroll: true }); }
       return;
     }
     case 'del-item': {
-      const i = +b.dataset.i; const v = getVals(s);
-      if (!confirm(`Hapus Lokasi ${i + 1}?`)) return;
-      v.items.splice(i, 1); saveVals(s); rerenderVars(); return;
+      const i = +b.dataset.i;
+      if (!confirm(`Hapus Lokasi ${i + 1}? (sementara, sampai Set to Default)`)) return;
+      const t = T(s); if (!t.items) t.items = clone(defaultItems(s));
+      t.items.splice(i, 1); normalizeItems(s); rerenderVars(); return;
     }
     case 'refresh': refreshFb(); return;
     case 'add-field': {
@@ -616,7 +744,7 @@ app.addEventListener('input', e => {
   if (t.matches('.var-input')) {
     const row = t.closest('.var');
     setVal(cur(), row.dataset.scope, row.dataset.k, t.value);
-    grow(t); schedule(); return;
+    grow(t); markAllRows(); schedule(); return;
   }
   if (t.matches('.fb-text')) {
     const c = t.parentElement.querySelector('.fb-count'); if (c) c.textContent = `${t.value.length}/${MAX_TEXT}`;
@@ -648,6 +776,12 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowRight') go(state.idx + 1);
 });
 window.addEventListener('hashchange', route);
+let resizeT;
+window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(growAll, 120); });
+// tutup kotak info "Perubahan sementara" saat klik di luar
+document.addEventListener('click', e => {
+  if (!e.target.closest('.dirty-pop, .dirty-ic')) $$('.dirty-pop').forEach(p => p.remove());
+});
 
 // =====================================================================
 //  FIREBASE — hanya untuk "masukkan"
@@ -669,12 +803,46 @@ async function initFirebase() {
     FB.db = dbMod.getDatabase(appMod.initializeApp(cfg));
     FB.mod = dbMod; FB.status = 'ready';
     dbMod.onValue(dbMod.ref(FB.db, '.info/connected'), snap => { FB.connected = snap.val() === true; updateConn(); });
+    listenDefaults();
     if (FB.want) subscribe(FB.want);
   } catch (e) { return fbFail('Gagal memuat Firebase: ' + e.message); }
   refreshFbUI();
 }
 function fbFail(msg) { FB.status = 'error'; FB.error = msg; refreshFbUI(); }
-function refreshFbUI() { updateConn(); renderFb(); }
+function refreshFbUI() { updateConn(); renderFb(); updateVarsFoot(); }
+
+// ---- Default variabel bersama (path: defaults/<slide>)
+function listenDefaults() {
+  FB.mod.onValue(FB.mod.ref(FB.db, 'defaults'), snap => {
+    const all = snap.val() || {};
+    for (const s of SLIDES) {
+      if (s.type === 'request') continue;
+      shared[s.id] = decodeShared(s, all[s.id]);
+      pruneTemp(s);
+    }
+    sharedLoaded = true; FB.defErr = '';
+    syncInputs();
+  }, err => { sharedLoaded = true; FB.defErr = err.message; updateVarsFoot(); });
+}
+async function setDefault() {
+  const s = cur(); if (!s || s.type === 'request') return;
+  if (FB.status !== 'ready') { toast(FB.status === 'unconfigured' ? 'Firebase belum disambungkan (lihat README.md)' : 'Belum terhubung ke Firebase'); return; }
+  const n = changeCount(s);
+  if (!n) { toast('Belum ada perubahan — semua sudah sesuai default'); return; }
+  if (!confirm(`Simpan ${n} perubahan di slide "${s.title}" sebagai default untuk SEMUA orang?`)) return;
+  const btns = $$('[data-act="set-default"]'); btns.forEach(b => { b.disabled = true; });
+  try {
+    await FB.mod.set(FB.mod.ref(FB.db, 'defaults/' + s.id), {
+      ...defaultPayload(s), ts: FB.mod.serverTimestamp(), by: String(LS.get('nama', '') || '').slice(0, 40),
+    });
+    delete temp[s.id];
+    $$('.dirty-pop').forEach(p => p.remove());
+    if (cur() === s) rerenderVars();
+    toast('Tersimpan sebagai default ✓ Semua orang akan melihatnya');
+  } catch (e) {
+    toast('Gagal menyimpan: ' + (e.code === 'PERMISSION_DENIED' || /permission/i.test(e.message) ? 'ditolak oleh Rules Firebase (perbarui Rules)' : (e.code || e.message)));
+  } finally { btns.forEach(b => { b.disabled = false; }); }
+}
 const fbQuery = id => FB.mod.query(FB.mod.ref(FB.db, 'masukan/' + id), FB.mod.limitToLast(200));
 function toArr(snap) { const a = []; snap.forEach(c => { a.push({ id: c.key, ...c.val() }); }); return a.reverse(); }
 
@@ -798,7 +966,10 @@ function renderRequestAgg(items) {
   draftEl.innerHTML = plainPH(FB.draft);
 }
 
-setInterval(() => { $$('time[data-ts]').forEach(t => { const ts = +t.dataset.ts; if (ts) t.textContent = relTime(ts); }); }, 60000);
+setInterval(() => { $$('time[data-ts]').forEach(t => { const ts = +t.dataset.ts; if (ts) t.textContent = relTime(ts); }); updateVarsFoot(); }, 60000);
+window.addEventListener('beforeunload', e => {
+  if (SLIDES.some(s => temp[s.id] && changeCount(s))) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // ------------------------------------------------------------ mulai
 route();
