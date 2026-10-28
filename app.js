@@ -3,7 +3,7 @@
 //  • Variabel & format: tersimpan di browser masing-masing (localStorage)
 //  • Masukkan: tersimpan di Firebase Realtime Database (realtime untuk semua)
 // =====================================================================
-import { SLIDES, COMMON_VARS, nowWIB, TEMPLATE_VERSION } from './templates.js';
+import { SLIDES, COMMON_VARS, nowWIB, TEMPLATE_VERSION } from './templates.js?v=3';
 
 const FIREBASE_VERSION = '10.12.2';
 const M0 = '', M1 = '', M2 = '', ME = ''; // penanda variabel internal
