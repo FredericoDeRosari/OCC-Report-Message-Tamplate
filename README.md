@@ -2,8 +2,9 @@
 
 Web untuk menguji format laporan WA (Gempa, Kebakaran, Erupsi, Gangguan Kelistrikan, Mati Listrik Massal, Banjir, Taifun, Unjuk Rasa) + slide **Tanah Longsor** untuk mengumpulkan usulan field.
 
-- **Variabel & format** → tersimpan di browser masing-masing orang (tidak dikirim ke mana pun).
-- **Masukkan** → tersimpan di **Firebase Realtime Database**, muncul *realtime* untuk semua orang (ada tombol ⟳ Refresh sebagai cadangan).
+- **Default variabel** → disimpan bersama di **Firebase** (`defaults/`). Semua orang melihat default yang sama.
+- **Ubah variabel** → hanya **sementara** di layar orang itu (ditandai ⓘ **!** di ujung kanan kotak). Tekan **💾 Set to Default** untuk menyimpannya jadi default bersama. Kalau halaman di-refresh tanpa Set to Default, perubahan hilang.
+- **Masukkan** → tersimpan di **Firebase** (`masukan/`), muncul *realtime* untuk semua orang (ada tombol ⟳ Refresh sebagai cadangan).
 - Tanpa backend. Di-hosting gratis di **GitHub Pages**.
 
 ---
@@ -17,7 +18,7 @@ Web untuk menguji format laporan WA (Gempa, Kebakaran, Erupsi, Gangguan Kelistri
 | `app.js` | Logika aplikasi |
 | `templates.js` | **Semua format & contoh isian** — edit di sini kalau format berubah |
 | `firebase-config.js` | **Config Firebase kamu** (wajib diisi) |
-| `database.rules.json` | Aturan keamanan Firebase (ditempel di Firebase Console) |
+| `database.rules.json` | Aturan keamanan Firebase (ditempel di Firebase Console — tidak wajib di-upload ke GitHub) |
 | `README.md` | Panduan ini |
 
 > Tidak perlu token GitHub. Tidak perlu install apa pun. Semua bisa lewat browser.
@@ -31,7 +32,11 @@ Web untuk menguji format laporan WA (Gempa, Kebakaran, Erupsi, Gangguan Kelistri
    - Lokasi: **Singapore (asia-southeast1)** (paling dekat dengan Indonesia)
    - Mode: **Start in locked mode** → **Enable**
 3. Buka tab **Rules** → hapus semua isinya → tempel seluruh isi file **`database.rules.json`** → **Publish**.
-   - Aturan ini: semua orang boleh **membaca** & **menambah** masukkan, tapi **tidak bisa mengedit/menghapus** masukkan orang lain. Panjang teks maks 1000 karakter.
+   - Aturan ini:
+     - **Masukkan**: semua orang boleh membaca & menambah, tapi **tidak bisa mengedit/menghapus** masukkan orang lain (maks 1000 karakter).
+     - **Default variabel**: semua orang boleh membaca & menimpa lewat tombol Set to Default, tapi **tidak bisa menghapus**. Isinya wajib teks (maks 2000 karakter per variabel).
+   - ⚠️ Kalau sebelumnya sudah pernah menempel rules versi lama, **tempel ulang** versi ini lalu **Publish** — tanpa itu tombol Set to Default akan ditolak.
+   - File ini **tidak wajib** di-upload ke GitHub; yang dipakai hanya yang di-Publish di Firebase.
 4. Kembali ke ⚙️ **Project settings** (ikon gerigi di kiri atas) → tab **General** → bagian **Your apps** → klik ikon **`</>`** (Web).
    - Nickname bebas, **jangan** centang Firebase Hosting → **Register app**.
 5. Akan muncul kode seperti ini — **yang diambil hanya bagian di dalam `{ ... }`**:
@@ -116,6 +121,20 @@ Semua ada di **`templates.js`**:
 - `vars` = label, petunjuk (`hint`), dan contoh default (`def`) tiap variabel.
 - Format WA yang didukung di pratinjau: `*tebal*`, `_miring_`, `~coret~`, `` `kode` ``, ` ```mono``` `, `> kutipan`.
 
+## 💾 Set to Default — cara kerja
+
+| Tombol | Fungsi |
+|---|---|
+| ⓘ **!** di kotak variabel | Muncul kalau isinya beda dari default. Ketuk → info *"Perubahan sementara, Set to Default jika ingin menyimpan"* + nilai default saat ini. |
+| ↺ (per variabel) | Kembalikan variabel itu ke default bersama |
+| **↺ Batalkan** (atas) | Buang semua perubahan sementara di slide itu |
+| **Contoh bawaan** (bawah) | Isi semua dengan contoh asli dari `templates.js` (sementara). Berguna kalau default bersama berantakan → muat contoh bawaan → Set to Default. |
+| **💾 Set to Default** (bawah) | Simpan isian sekarang jadi default untuk **semua orang** (ada konfirmasi). Nama di kolom masukkan ikut dicatat sebagai "disimpan oleh". |
+
+- Kalau orang lain menekan Set to Default, kotak yang **tidak** sedang kamu ubah ikut ter-update otomatis. Yang sedang kamu ubah tetap milikmu (tanda **!** tetap ada).
+- **Tanggal & Waktu Laporan** (`{Current Date}`) otomatis memakai waktu sekarang, dan tidak ikut dibekukan saat Set to Default kecuali memang kamu ubah.
+- Untuk Unjuk Rasa, tambah/hapus lokasi juga dihitung sebagai perubahan sementara.
+
 ## 🧹 Menghapus masukkan
 
 Firebase Console → **Realtime Database → Data** → buka `masukan` → `nama-slide` → arahkan ke item → ikon 🗑️.
@@ -130,7 +149,7 @@ Firebase Console → **Realtime Database → Data** → buka `masukan` → `nama
 | **Firebase belum disetel** | `firebase-config.js` masih berisi `ISI_...` → isi sesuai Bagian 1 langkah 5–6. |
 | **File firebase-config.js tidak valid** | Biasanya ikut tertempel baris `import ...` atau baris `export const firebaseConfig =` terhapus. Samakan dengan contoh di file aslinya. |
 | **"databaseURL" belum ada** | Buat Realtime Database dulu, lalu salin ulang config. |
-| **Gagal mengirim: ditolak oleh Rules** / tidak bisa membaca | Rules belum di-*Publish* — ulangi Bagian 1 langkah 3. |
+| **Gagal mengirim / menyimpan: ditolak oleh Rules** / "Tidak bisa membaca default" | Rules belum di-*Publish* atau masih versi lama — tempel ulang `database.rules.json` (Bagian 1 langkah 3). |
 | Status **Offline** terus | Cek koneksi internet / jaringan kantor memblokir `firebasedatabase.app`. |
 | Perubahan file belum muncul | Tunggu 1–5 menit (cache GitHub Pages), lalu refresh. |
 | Laptop kantor juga memblokir `github.io` | Buka lewat HP, atau minta IT membuka `*.github.io`. |
