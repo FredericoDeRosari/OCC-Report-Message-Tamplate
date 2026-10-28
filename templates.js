@@ -21,25 +21,37 @@ export function nowWIB() {
   return `${HARI[d.getUTCDay()]}, ${d.getUTCDate()} ${BULAN[d.getUTCMonth()]} ${d.getUTCFullYear()}, Pukul ${hh}:${mm} WIB`;
 }
 
-const STATUS_OPTS = ['Dalam Konfirmasi ⌛', 'Aman ✅', 'Terdampak 🟠'];
+// Naikkan angka ini setiap kali format/contoh di file ini diubah →
+// default lama yang tersimpan di Firebase otomatis diabaikan (pakai contoh baru).
+export const TEMPLATE_VERSION = 3;
+
+// ⚠️ Pilihan yang boleh dipakai (pilih lewat tombol, tidak bisa diketik bebas)
+const ALERT_OPTS = ['🔴 Siaga 1', '🟠 Siaga 2', '🟡 Siaga 3', '🟢 Siaga 4', '⚪ Normal'];
+const STATUS_OPTS = ['Dalam Konfirmasi ⌛', 'Aman ✅', 'Tidak Terdampak ✅', 'Terdampak 🟠'];
 const SIFAT = 'Sifat Laporan: Sebagai Informasi / Eskalasi';
 const DIST = 'Nearest Facility Distance: angka + km/m';
+const IMPACT = 'Impacted Facilities: Kode - Nama Fasilitas - AREA (REGION)';
 
 // Variabel yang dipakai di banyak format (label, petunjuk, contoh default)
 export const COMMON_VARS = {
   'Update Number': {
-    label: 'Nomor Update', optional: true, def: '1',
-    hint: 'Kosongkan → judul "LAPORAN". Isi angka → judul "UPDATE 1", "UPDATE 2", dst.',
+    label: 'Nomor Update', optional: true, def: '0',
+    hint: '0 atau kosong → judul "LAPORAN". 1, 2, 3 … → judul "UPDATE 1", "UPDATE 2", dst.',
+    options: ['0', '1', '2', '3'],
   },
-  'Alert': { label: 'Alert / Level', hint: 'Sertakan emoji, contoh: 🟢 Siaga 4', def: '🟢 Siaga 4' },
+  'Alert': { label: 'Alert / Siaga', hint: 'Hanya Siaga 1–4 atau Normal', def: '🟢 Siaga 4', options: ALERT_OPTS, strict: true },
   'Current Date': { label: 'Tanggal & Waktu Laporan', hint: 'Contoh: Rabu, 1 Juli 2026, Pukul 00:05 WIB', def: nowWIB, now: true },
   'Nearest Facility Information[0]': { label: 'Aset Terdekat — Nama', hint: 'Nama kantor/fasilitas terdekat', def: 'KCP Gisting' },
   'Nearest Facility Information[1]': { label: 'Aset Terdekat — Area', hint: 'Huruf kapital, contoh: AREA BANDAR LAMPUNG', def: 'AREA BANDAR LAMPUNG' },
-  'Nearest Facility Information[2]': { label: 'Aset Terdekat — Region', hint: 'Huruf kapital, contoh: REGION II / SUMATERA 2', def: 'REGION II / SUMATERA 2' },
+  'Nearest Facility Information[2]': { label: 'Aset Terdekat — Region', hint: 'Huruf kapital + angka romawi, contoh: REGION II / SUMATERA 2', def: 'REGION II / SUMATERA 2' },
   'Nearest Facility Distance': { label: 'Jarak ke Aset', hint: 'Angka + satuan, contoh: 6,43 km atau 800 m', def: '6,43 km' },
-  'Employee Status': { label: 'Status Pegawai', def: STATUS_OPTS[0], options: STATUS_OPTS },
-  'Asset Status': { label: 'Status Aset', def: STATUS_OPTS[0], options: STATUS_OPTS },
-  'Operational Status': { label: 'Status Operasional', def: STATUS_OPTS[0], options: STATUS_OPTS },
+  'Employee Status': { label: 'Status Pegawai', def: STATUS_OPTS[0], options: STATUS_OPTS, strict: true },
+  'Asset Status': { label: 'Status Aset', def: STATUS_OPTS[0], options: STATUS_OPTS, strict: true },
+  'Operational Status': { label: 'Status Operasional', def: STATUS_OPTS[0], options: STATUS_OPTS, strict: true },
+  'Impacted Facilities': {
+    label: 'Aset Terdampak', def: '10300 - KC Daan Mogot - AREA JAKARTA BARAT (REGION VI / JAKARTA 2)',
+    hint: 'Format: Kode - Nama Fasilitas - AREA (REGION romawi). Satu baris per aset.',
+  },
   'Penanganan': { label: 'Penanganan', def: 'Proses Call Tree.' },
   'Next Step': { label: 'Next Step', def: 'Monitor perkembangan situasi.' },
   'Incident ID': { label: 'Incident ID', def: 'INC-202610281322-553163' },
@@ -176,7 +188,7 @@ Demikian kami laporkan, terima kasih.
 *Informasi:*
 Terjadi gangguan kelistrikan di {ELC Location Name}. Berdasarkan konfirmasi {ELC Confirm By}, terdapat {ELC Event Details} yang disebabkan oleh {ELC Cause}.
 
-*Aset Terdampak:* {Impacted Facilities Code → Facility Name Bank Area (Bank Region)}
+*Aset Terdampak:* {${IMPACT}}
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -195,10 +207,7 @@ Demikian kami laporkan, terima kasih.
       'ELC Confirm By': { label: 'Dikonfirmasi oleh', def: 'PIC GA Kanwil Surabaya' },
       'ELC Event Details': { label: 'Detail Kejadian', def: 'gangguan pada panel LVMDP sehingga lantai 3–5 padam' },
       'ELC Cause': { label: 'Penyebab', def: 'trip pada trafo distribusi PLN' },
-      'Impacted Facilities Code → Facility Name Bank Area (Bank Region)': {
-        label: 'Aset Terdampak', hint: 'Format: Kode → Nama Fasilitas AREA (REGION). Boleh lebih dari 1 baris.',
-        def: 'KC0123 → KC Surabaya Darmo AREA SURABAYA (REGION VIII / JAWA 3)',
-      },
+      'Impacted Facilities': { def: '12045 - KC Surabaya Darmo - AREA SURABAYA (REGION VIII / JAWA 3)' },
       'ELC Event Time End - ELC Event Time Start': { label: 'Durasi Gangguan', hint: 'Waktu selesai − waktu mulai', def: '1 jam 15 menit (09:05 – 10:20 WIB)' },
       'Penanganan': { def: 'Proses Call Tree dan aktivasi genset.' },
       'Next Step': { def: 'Monitor pemulihan suplai listrik PLN.' },
@@ -215,7 +224,7 @@ Demikian kami laporkan, terima kasih.
 *Informasi:*
 Terjadi beberapa titik pemadaman listrik di sekitar {BLK Location Area} pada pukul {BLK Event Time Start} WIB. Penyebab pemadaman yaitu {BLK Cause}.
 
-*Aset Terdampak:* {Impacted Facilities Code → Facility Name Bank Area (Bank Region)}
+*Aset Terdampak:* {${IMPACT}}
 
 👤 *Pegawai:* {Employee Status}
 🏢 *Aset:* {Asset Status}
@@ -233,10 +242,7 @@ Demikian kami laporkan, terima kasih.
       'BLK Location Area': { label: 'Area Pemadaman', def: 'Jakarta Barat, Tangerang, dan Tangerang Selatan' },
       'BLK Event Time Start': { label: 'Jam Mulai Padam', def: '19:40' },
       'BLK Cause': { label: 'Penyebab', def: 'gangguan pada jaringan transmisi SUTET 500 kV' },
-      'Impacted Facilities Code → Facility Name Bank Area (Bank Region)': {
-        label: 'Aset Terdampak', hint: 'Format: Kode → Nama Fasilitas AREA (REGION). Satu baris per aset.',
-        def: 'KC0456 → KC Daan Mogot AREA JAKARTA DAAN MOGOT (REGION VI / JAKARTA 2)\nKC0789 → KC BSD AREA TANGERANG (REGION VI / JAKARTA 3)',
-      },
+      'Impacted Facilities': { def: '10300 - KC Daan Mogot - AREA JAKARTA BARAT (REGION VI / JAKARTA 2)\n10512 - KC BSD - AREA TANGERANG (REGION VI / JAKARTA 3)' },
       'BLK Estimated Duration': { label: 'Estimasi Durasi', hint: 'Format: x jam y menit', def: '2 jam 30 menit' },
       'Penanganan': { def: 'Proses Call Tree dan monitoring genset serta BBM di unit terdampak.' },
       'Next Step': { def: 'Monitor pemulihan listrik PLN dan update berkala.' },
