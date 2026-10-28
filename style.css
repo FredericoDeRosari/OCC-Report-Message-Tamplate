@@ -270,6 +270,15 @@ code, pre, .kbd { font-family: var(--mono); }
 .var-input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 70%, var(--line-2)); background: #0f1620; }
 .var-hint { font-size: 12px; color: var(--dim); margin-top: 6px; }
 
+/* pilihan cepat */
+.var-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.opt {
+  font: 600 12px/1 var(--font); color: var(--muted); background: var(--card); border: 1px solid var(--line-2);
+  padding: 7px 10px; border-radius: 999px; cursor: pointer; transition: .15s;
+}
+.opt:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 60%, var(--line-2)); }
+.opt.on { color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--card)); border-color: var(--accent); }
+
 /* perubahan sementara */
 .var-field { position: relative; }
 .var.dirty .var-input { padding-right: 40px; border-color: #f5b84a66; }
