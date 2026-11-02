@@ -140,6 +140,19 @@ Semua ada di **`templates.js`**:
 ### Kenapa default saya tidak berubah setelah update file?
 Default yang pernah di-*Set to Default* tersimpan di Firebase dan menimpa contoh di `templates.js`. Setiap kali `templates.js` diubah, **naikkan angka `TEMPLATE_VERSION`** di bagian atas file itu → semua default lama di Firebase otomatis diabaikan dan contoh baru yang dipakai. (Atau hapus node `defaults` di Firebase Console → Realtime Database → Data.)
 
+## ✏️ Edit Template
+
+1. Tekan **✏️ Edit Template** (kuning) di panel Template → tombol berubah jadi **💾 Save** (hijau).
+2. Ketik langsung untuk mengubah teks. Variabel tampil sebagai kotak kecil:
+   - **Seret** kotak variabel untuk memindah posisinya.
+   - **Seret ke "Daftar variabel"** atau klik **×** untuk mengeluarkannya dari template.
+   - Seret / ketuk variabel dari **Daftar variabel** untuk memasukkannya kembali (bisa lebih dari sekali).
+   - **＋ Tambah variabel** untuk membuat variabel baru (langsung disisipkan di posisi kursor). Mengetik `{Nama Baru}` manual juga otomatis jadi variabel.
+3. Tekan **Save** → template berubah **sementara** (ada tanda **!**). Tekan **Set to Default** supaya template + variabel baru dipakai semua orang.
+4. Kalau pindah slide / tampilan / Set to Default saat masih mengedit dan belum Save, muncul popup: **Buang perubahan · Lanjut edit · Save & lanjutkan**.
+
+Unjuk Rasa punya 2 editor: **Template utama** dan **Template per lokasi** (diulang di posisi 📍 Daftar Lokasi).
+
 ## 🧹 Menghapus masukkan
 
 Firebase Console → **Realtime Database → Data** → buka `masukan` → `nama-slide` → arahkan ke item → ikon 🗑️.
