@@ -3,7 +3,7 @@
 //  • Variabel & format: tersimpan di browser masing-masing (localStorage)
 //  • Masukkan: tersimpan di Firebase Realtime Database (realtime untuk semua)
 // =====================================================================
-import { SLIDES, COMMON_VARS, nowWIB, TEMPLATE_VERSION } from './templates.js?v=3';
+import { SLIDES, COMMON_VARS, nowWIB, TEMPLATE_VERSION } from './templates.js?v=4';
 
 const FIREBASE_VERSION = '10.12.2';
 const M0 = '', M1 = '', M2 = '', ME = ''; // penanda variabel internal
@@ -28,6 +28,7 @@ const state = {
   hl: LS.get('hl', true),
   mmode: LS.get('mmode', 'format'), // mobile: 'format' | 'real'
   active: null,         // {scope,key} variabel yang sedang difokus
+  edit: null,           // { sid, init, draft, last } saat mode Edit Template
 };
 let uid = 0;
 
@@ -48,21 +49,53 @@ function extractKeys(tpl) {
   for (const m of tpl.matchAll(PH)) if (!out.includes(m[1])) out.push(m[1]);
   return out;
 }
+const isComp = (s, k) => !!(s.computed && k in s.computed);
+const uniqArr = a => [...new Set(a)];
 for (const s of SLIDES) {
   if (s.type === 'request') continue;
-  s.keys = extractKeys(s.tpl).filter(k => !(s.computed && k in s.computed));
-  s.metaMap = {}; s.defaults = {};
-  for (const k of s.keys) {
+  s.baseTpl = s.tpl; s.baseItemTpl = s.itemTpl;
+  s.baseVars = extractKeys(s.tpl).filter(k => !isComp(s, k));
+  s.baseItemVars = s.type === 'group' ? extractKeys(s.itemTpl).filter(k => k !== 'No') : [];
+  s.metaMap = {}; s.defaults = {}; s.itemMeta = {};
+}
+
+// ------------------------------------------------------------ template (bisa diedit)
+//  urutan: draf (sedang diedit) > tempTpl (sudah Save, sementara) > default Firebase > bawaan
+const tempTpl = {};
+const sameTpl = (a, b) => a.tpl === b.tpl && (a.itemTpl ?? '') === (b.itemTpl ?? '') && a.cv.join('\n') === b.cv.join('\n') && a.cvi.join('\n') === b.cvi.join('\n');
+function defTpl(s) {
+  const sh = shared[s.id];
+  return { tpl: sh?.tpl ?? s.baseTpl, itemTpl: sh?.itemTpl ?? s.baseItemTpl, cv: sh?.cv ?? [], cvi: sh?.cvi ?? [] };
+}
+function effTpl(s) {
+  if (state.edit?.sid === s.id) return state.edit.draft;
+  return tempTpl[s.id] || defTpl(s);
+}
+function knownVars(s, e = effTpl(s)) {
+  const g = uniqArr([...s.baseVars, ...e.cv, ...extractKeys(e.tpl).filter(k => !isComp(s, k))]);
+  const i = s.type === 'group' ? uniqArr([...s.itemExtra, ...s.baseItemVars, ...e.cvi, ...extractKeys(e.itemTpl).filter(k => k !== 'No')]) : [];
+  return { g, i };
+}
+/** Hitung ulang daftar variabel slide dari template yang berlaku */
+function refreshSlide(s) {
+  if (!s || s.type === 'request') return;
+  const e = effTpl(s);
+  s.tpl = e.tpl;
+  s.keys = extractKeys(e.tpl).filter(k => !isComp(s, k));
+  const kv = knownVars(s, e);
+  for (const k of kv.g) {
+    if (s.metaMap[k]) continue;
     const m = metaFor(k, s.vars);
     s.metaMap[k] = m;
     s.defaults[k] = typeof m.def === 'function' ? m.def() : (m.def ?? '');
   }
   if (s.type === 'group') {
-    s.itemKeys = [...s.itemExtra, ...extractKeys(s.itemTpl).filter(k => k !== 'No' && !s.itemExtra.includes(k))];
-    s.itemMeta = {};
-    for (const k of s.itemKeys) s.itemMeta[k] = metaFor(k, s.itemVars);
+    s.itemTpl = e.itemTpl;
+    s.itemKeys = [...s.itemExtra, ...extractKeys(e.itemTpl).filter(k => k !== 'No' && !s.itemExtra.includes(k))];
+    for (const k of kv.i) if (!s.itemMeta[k]) s.itemMeta[k] = metaFor(k, s.itemVars);
   }
 }
+const keySig = s => (s?.keys || []).join('|') + '#' + (s?.itemKeys || []).join('|');
 
 // ------------------------------------------------------------ nilai variabel
 //  default  = milik bersama, tersimpan di Firebase (path: defaults/<slide>)
@@ -118,10 +151,12 @@ function changeCount(s) {
     t.items.forEach((it, i) => s.itemKeys.forEach(k => { if (isDirty(s, String(i), k)) n++; }));
     n += Math.abs(t.items.length - defaultItems(s).length);
   }
+  if (tempTpl[s.id]) n++; // template diubah (sementara)
   return n;
 }
 // Setelah default bersama berubah: buang perubahan sementara yang ternyata sudah sama
 function pruneTemp(s) {
+  if (tempTpl[s.id] && sameTpl(tempTpl[s.id], defTpl(s))) delete tempTpl[s.id];
   if (!temp[s.id]) return;
   const bag = bagOf(s);
   for (const k of Object.keys(bag)) if (bag[k] === defaultOf(s, 'g', k)) delete bag[k];
@@ -136,6 +171,10 @@ function decodeShared(s, raw) {
   if (!raw || typeof raw !== 'object') return null;
   if (raw.ver !== TEMPLATE_VERSION) return null; // default dari versi format lama → abaikan
   const out = { ts: raw.ts, by: raw.by || '' };
+  const lines = v => (typeof v === 'string' ? v.split('\n').filter(Boolean) : undefined);
+  if (typeof raw.tpl === 'string') out.tpl = raw.tpl;
+  if (typeof raw.itemTpl === 'string') out.itemTpl = raw.itemTpl;
+  out.cv = lines(raw.cv); out.cvi = lines(raw.cvi);
   if (s.type === 'group') {
     out.g = decObj(raw.g);
     const n = typeof raw.n === 'number' ? raw.n : 0;
@@ -151,9 +190,15 @@ function defaultPayload(s) {
     if (s.metaMap[k].now && !isDirty(s, 'g', k) && !(shBag && k in shBag)) continue;
     g[k] = val(s, 'g', k);
   }
-  if (s.type !== 'group') return { v: encObj(g) };
+  // template + variabel tambahan (hanya disimpan kalau beda dari bawaan)
+  const e = effTpl(s), tp = {};
+  if (e.tpl !== s.baseTpl) tp.tpl = e.tpl;
+  if (s.type === 'group' && e.itemTpl !== s.baseItemTpl) tp.itemTpl = e.itemTpl;
+  if (e.cv.length) tp.cv = e.cv.join('\n');
+  if (e.cvi.length) tp.cvi = e.cvi.join('\n');
+  if (s.type !== 'group') return { v: encObj(g), ...tp };
   const items = itemsOf(s).map(it => encObj(Object.fromEntries(s.itemKeys.map(k => [k, it?.[k] ?? '']))));
-  return { g: encObj(g), items, n: items.length };
+  return { g: encObj(g), items, n: items.length, ...tp };
 }
 
 // ------------------------------------------------------------ mesin template
@@ -279,6 +324,7 @@ function parseHash() {
   return { view: p[0], sid: p[1] };
 }
 function route() {
+  curHash = location.hash;
   const { view, sid } = parseHash();
   if (view !== 'desktop' && view !== 'mobile') { state.view = null; state.idx = -1; renderLanding(); return; }
   const idx = SLIDES.findIndex(s => s.id === sid);
@@ -392,6 +438,82 @@ const varsFootHTML = () => `<div class="vars-foot" id="varsFoot">
   </div>`;
 const varsNote = '<p class="note">✏️ Perubahan bersifat <b>sementara</b> (ditandai <span class="dirty-ic demo">!</span>). Tekan <b>Set to Default</b> di bawah untuk menyimpan sebagai default bersama.</p>';
 
+// ---- Edit Template: tombol, editor, palet variabel
+const editing = s => state.edit?.sid === s.id;
+const BLOCKS = { ITEMS: '📍 Daftar Lokasi', IDS: '🆔 Daftar Incident ID' };
+function tplBtns(s) {
+  return editing(s)
+    ? '<button type="button" class="btn sm ghost" data-act="tpl-cancel">Batal</button><button type="button" class="btn sm tpl-btn save" data-act="tpl-save">💾 Save</button>'
+    : '<button type="button" class="btn sm tpl-btn" data-act="tpl-edit">✏️ Edit Template</button>';
+}
+const tplFlag = s => (tempTpl[s.id] && !editing(s) ? '<span class="tpl-flag-wrap"><button type="button" class="dirty-ic tpl-flag" data-act="tpl-info" title="Template diubah (sementara)" aria-label="Template diubah sementara — ketuk untuk info">!</button></span>' : '');
+function tokLabel(s, ed, k, kind) {
+  if (kind === 'blk') return BLOCKS[k] || k;
+  if (kind === 'no') return 'No.';
+  if (kind === 'c') return (s.computedLabels?.[k] || k).replace(/\s*\(.*$/, '') + ' ·auto';
+  const m = ed === 'item' ? s.itemMeta[k] : s.metaMap[k];
+  return m?.label || autoMeta(k).label;
+}
+function tokHTML(s, ed, k, kind) {
+  return `<span class="tk tk-${kind}" contenteditable="false" draggable="false" data-ed="${ed}" data-kind="${kind}" data-k="${esc(k)}" title="${esc(kind === 'blk' ? `[[${k}]]` : `{${k}}`)}">${esc(tokLabel(s, ed, k, kind))}<span class="tk-x" data-act="tk-del" title="Keluarkan dari template">×</span></span>`;
+}
+const TOKEN_RE = /\{([^{}\n]+)\}|\[\[(ITEMS|IDS)\]\]/g;
+function edHTML(s, text, ed) {
+  let h = '', last = 0;
+  for (const m of text.matchAll(TOKEN_RE)) {
+    h += esc(text.slice(last, m.index));
+    const kind = m[2] ? 'blk' : ed === 'item' ? (m[1] === 'No' ? 'no' : 'v') : (isComp(s, m[1]) ? 'c' : 'v');
+    h += tokHTML(s, ed, m[2] || m[1], kind);
+    last = m.index + m[0].length;
+  }
+  return h + esc(text.slice(last)) + '\n'; // "\n" penjaga supaya Enter di baris terakhir terlihat
+}
+function editorsHTML(s) {
+  const d = state.edit.draft, grp = s.type === 'group';
+  return `<p class="note ed-note">✏️ <b>Mode edit.</b> Ketik untuk mengubah teks · <b>seret</b> variabel untuk memindah · seret ke daftar variabel atau klik <b>×</b> untuk mengeluarkan.</p>
+    ${grp ? '<div class="ed-label">Template utama</div>' : ''}
+    <div class="tpl-ed" contenteditable="true" spellcheck="false" data-ed="main" aria-label="Editor template">${edHTML(s, d.tpl, 'main')}</div>
+    ${grp ? `<div class="ed-label">Template per lokasi <small>diulang untuk setiap lokasi di ${BLOCKS.ITEMS}</small></div>
+    <div class="tpl-ed" contenteditable="true" spellcheck="false" data-ed="item" aria-label="Editor template per lokasi">${edHTML(s, d.itemTpl, 'item')}</div>` : ''}`;
+}
+function countTok(text, tok) { return text.split(tok).length - 1; }
+function palChipsHTML(s) {
+  const d = state.edit.draft, kv = knownVars(s, d), grp = s.type === 'group';
+  const chip = (ed, k, kind, src) => {
+    const n = countTok(ed === 'item' ? d.itemTpl : d.tpl, kind === 'blk' ? `[[${k}]]` : `{${k}}`);
+    const custom = (ed === 'item' ? d.cvi : d.cv).includes(k);
+    return `<span class="pal-chip ${n ? 'used' : 'unused'} pk-${kind}" draggable="false" data-ed="${ed}" data-kind="${kind}" data-k="${esc(k)}" title="${esc(kind === 'blk' ? `[[${k}]]` : `{${k}}`)}">${esc(tokLabel(s, ed, k, kind))}${n ? `<em>${n}×</em>` : ''}${custom && !n ? `<span class="tk-x" data-act="tpl-delvar" title="Hapus variabel tambahan">×</span>` : ''}</span>`;
+  };
+  let h = `<div class="pal-group"><div class="pal-title">${grp ? 'Variabel umum' : 'Variabel'}</div><div class="pal-list">`;
+  if (grp) h += Object.keys(BLOCKS).map(k => chip('main', k, 'blk')).join('') + Object.keys(s.computed).map(k => chip('main', k, 'c')).join('');
+  h += kv.g.map(k => chip('main', k, 'v')).join('') + '</div></div>';
+  if (grp) h += `<div class="pal-group"><div class="pal-title">Variabel per lokasi</div><div class="pal-list">${chip('item', 'No', 'no')}${kv.i.map(k => chip('item', k, 'v')).join('')}</div></div>`;
+  return h;
+}
+function paletteHTML(s) {
+  const grp = s.type === 'group';
+  return `<div class="pal" data-drop="out">
+    <div class="pal-head"><b>Daftar variabel</b><small>Seret ke template · ketuk untuk menyisipkan di posisi kursor · <span class="pal-legend"><i class="lg used"></i>terpakai <i class="lg unused"></i>belum dipakai</span></small></div>
+    <div class="pal-chips">${palChipsHTML(s)}</div>
+    <div class="pal-new">
+      <input class="pal-input" maxlength="60" placeholder="Nama variabel baru, mis. Korban Jiwa" aria-label="Nama variabel baru">
+      ${grp ? '<select class="pal-scope" aria-label="Jenis variabel"><option value="main">Umum</option><option value="item">Per lokasi</option></select>' : ''}
+      <button type="button" class="btn sm" data-act="tpl-addvar">＋ Tambah variabel</button>
+    </div>
+    <div class="pal-foot"><button type="button" class="btn sm ghost" data-act="tpl-builtin" title="Kembalikan isi editor ke template bawaan">↺ Template bawaan</button></div>
+  </div>`;
+}
+function rawPanelHTML(s) {
+  const ed = editing(s);
+  return `<section class="panel p-raw ${ed ? 'editing' : ''}">
+      <div class="panel-head"><span class="pdot"></span><h2>Template Format</h2>${tplFlag(s)}
+        <div class="head-actions">${ed ? '' : '<button type="button" class="btn sm" data-act="copy-raw">⧉ Salin</button>'}${tplBtns(s)}</div></div>
+      <div class="panel-body">${ed ? editorsHTML(s) : `<pre id="raw" class="raw"></pre>
+        <p class="legend">Klik <span class="ph">{variabel}</span> untuk langsung mengisinya di panel kanan.</p>`}</div>
+      ${ed ? paletteHTML(s) : ''}
+    </section>`;
+}
+
 function formHTML(s) {
   const req = s.type === 'request';
   return `<form class="fb-form" autocomplete="off" novalidate>
@@ -424,12 +546,7 @@ function desktopBody(s) {
         <div class="head-actions">${hlToggle()}<button type="button" class="btn sm" data-act="copy-filled">⧉ Salin</button><a class="btn sm wa" data-act="wa" target="_blank" rel="noopener" href="#">WA ↗</a></div></div>
       <div class="panel-body wa-chat"><div class="wa-bubble"><div id="filled" class="wa-text"></div><div class="wa-meta">${timeNow()} <span class="ticks">✓✓</span></div></div></div>
     </section>
-    <section class="panel p-raw">
-      <div class="panel-head"><span class="pdot"></span><h2>Template Format</h2>
-        <div class="head-actions"><button type="button" class="btn sm" data-act="copy-raw">⧉ Salin</button></div></div>
-      <div class="panel-body"><pre id="raw" class="raw"></pre>
-        <p class="legend">Klik <span class="ph">{variabel}</span> untuk langsung mengisinya di panel kanan.</p></div>
-    </section>
+    ${rawPanelHTML(s)}
     <section class="panel p-vars">
       <div class="panel-head"><span class="pdot"></span><h2>Input Variabel</h2><span class="sub" id="varCount">${varCount(s)}</span>
         <div class="head-actions"><button type="button" class="btn sm ghost" data-act="reset-all" title="Batalkan semua perubahan sementara">↺ Batalkan</button><button type="button" class="btn sm ghost" data-act="clear-all" title="Kosongkan semua">✕ Kosongkan</button></div></div>
@@ -441,10 +558,18 @@ function desktopBody(s) {
 }
 
 function mobileFormatHTML(s) {
-  const real = state.mmode === 'real';
+  const real = state.mmode === 'real' && !editing(s);
+  if (editing(s)) {
+    return `<section class="card m-format editing">
+    <div class="card-head"><div><h2>Edit Template</h2><small>Ubah teks & susun ulang variabel</small></div>
+      <div class="head-actions">${tplBtns(s)}</div></div>
+    ${editorsHTML(s)}
+    ${paletteHTML(s)}
+  </section>`;
+  }
   return `<section class="card m-format">
     <div class="card-head">
-      <div><h2>${real ? 'Contoh / Realcase' : 'Format'}</h2><small>${real ? 'Pesan WA setelah variabel diisi' : 'Template dengan {variabel}'}</small></div>
+      <div><h2>${real ? 'Contoh / Realcase' : 'Format'}${tplFlag(s)}</h2><small>${real ? 'Pesan WA setelah variabel diisi' : 'Template dengan {variabel}'}</small></div>
       <div class="seg" role="group" aria-label="Mode tampilan">
         <button type="button" data-mmode="format" class="${real ? '' : 'on'}" aria-pressed="${!real}">Format</button>
         <button type="button" data-mmode="real" class="${real ? 'on' : ''}" aria-pressed="${real}">Realcase</button>
@@ -456,7 +581,7 @@ function mobileFormatHTML(s) {
     <div class="card-actions">
       ${real
         ? `${hlToggle()}<span class="sub" id="charCount"></span><span class="grow"></span><button type="button" class="btn sm" data-act="copy-filled">⧉ Salin</button><a class="btn sm wa" data-act="wa" target="_blank" rel="noopener" href="#">WA ↗</a>`
-        : '<span class="sub">Ketuk <span class="ph">{variabel}</span> untuk mengisinya</span><span class="grow"></span><button type="button" class="btn sm" data-act="copy-raw">⧉ Salin</button>'}
+        : `${tplBtns(s)}<span class="grow"></span><button type="button" class="btn sm" data-act="copy-raw">⧉ Salin</button>`}
     </div>
   </section>`;
 }
@@ -661,6 +786,290 @@ function toast(msg) {
   clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
+// =====================================================================
+//  EDIT TEMPLATE
+// =====================================================================
+function renderTplArea() {
+  const s = cur(); if (!s || s.type === 'request') return;
+  const old = state.view === 'desktop' ? $('.p-raw') : $('.m-format');
+  if (old) old.outerHTML = state.view === 'desktop' ? rawPanelHTML(s) : mobileFormatHTML(s);
+  renderPreviews();
+}
+function afterTplChange(s) {
+  const sig = keySig(s); refreshSlide(s);
+  if (keySig(s) !== sig) rerenderVars(); else { renderPreviews(); updateVarsFoot(); }
+}
+function startEdit() {
+  const s = cur(); if (!s || s.type === 'request' || state.edit) return;
+  const e = clone(effTpl(s));
+  state.edit = { sid: s.id, init: clone(e), draft: e, last: null };
+  if (state.view === 'mobile') state.mmode = 'format';
+  renderTplArea();
+  const ed = $('.tpl-ed'); ed?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+function serializeEd(el) {
+  let out = '';
+  const walk = n => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) out += c.nodeValue;
+      else if (c.nodeType !== 1) continue;
+      else if (c.classList.contains('tk')) out += c.dataset.kind === 'blk' ? `[[${c.dataset.k}]]` : `{${c.dataset.k}}`;
+      else if (c.tagName === 'BR') out += '\n';
+      else {
+        if (/^(DIV|P)$/.test(c.tagName) && out && !out.endsWith('\n')) out += '\n';
+        walk(c);
+      }
+    }
+  };
+  walk(el);
+  return out.replace(/​/g, '').replace(/\s+$/, '');
+}
+function readDraft() {
+  if (!state.edit) return;
+  const d = state.edit.draft, m = $('.tpl-ed[data-ed="main"]'), it = $('.tpl-ed[data-ed="item"]');
+  if (m) d.tpl = serializeEd(m);
+  if (it) d.itemTpl = serializeEd(it);
+}
+const editDirty = () => { if (!state.edit) return false; readDraft(); return !sameTpl(state.edit.draft, state.edit.init); };
+let edT;
+function edChanged() {
+  clearTimeout(edT);
+  edT = setTimeout(() => {
+    if (!state.edit) return;
+    readDraft(); afterTplChange(cur());
+    const pc = $('.pal-chips'); if (pc) pc.innerHTML = palChipsHTML(cur());
+  }, 120);
+}
+/** Selesai mengedit. save=true → simpan sebagai perubahan sementara */
+function endEdit(save, render = true) {
+  if (!state.edit) return;
+  const s = SLIDES.find(x => x.id === state.edit.sid);
+  if (save) {
+    readDraft();
+    const d = state.edit.draft;
+    // {Nama} yang diketik manual → otomatis jadi variabel baru
+    const kv = knownVars(s, { ...d, cv: [], cvi: [] });
+    const base = knownVars(s, { tpl: s.baseTpl, itemTpl: s.baseItemTpl, cv: [], cvi: [] });
+    d.cv = uniqArr([...d.cv, ...kv.g.filter(k => !base.g.includes(k))]);
+    if (s.type === 'group') d.cvi = uniqArr([...d.cvi, ...kv.i.filter(k => !base.i.includes(k))]);
+    if (sameTpl(d, defTpl(s))) delete tempTpl[s.id]; else tempTpl[s.id] = clone(d);
+  }
+  const changed = save && !sameTpl(state.edit.draft, state.edit.init);
+  state.edit = null;
+  const sig = keySig(s);
+  refreshSlide(s);
+  if (cur() === s) {
+    if (render) { renderTplArea(); rerenderVars(); }
+    else if (keySig(s) !== sig) rerenderVars();
+  }
+  if (save) toast(changed ? 'Template tersimpan (sementara) ✓ Tekan Set to Default supaya dipakai semua orang' : 'Tidak ada perubahan template');
+}
+
+// ---- Popup: perubahan template belum disimpan
+let guardCont = null;
+function guard(cont) {
+  if (!state.edit) { cont(); return; }
+  if (!editDirty()) { endEdit(false, false); cont(); return; }
+  guardCont = cont;
+  document.getElementById('guard')?.remove();
+  const s = SLIDES.find(x => x.id === state.edit.sid);
+  document.body.insertAdjacentHTML('beforeend', `<div class="modal-bg" id="guard">
+    <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="guardT">
+      <div class="modal-ico">⚠️</div>
+      <h3 id="guardT">Template belum disimpan</h3>
+      <p>Kamu masih mengedit template <b>${esc(s.title)}</b> dan ada perubahan yang belum di-<b>Save</b>. Kalau lanjut tanpa menyimpan, perubahan itu akan hilang.</p>
+      <div class="modal-act">
+        <button type="button" class="btn ghost danger" data-g="discard">Buang perubahan</button>
+        <button type="button" class="btn" data-g="stay">Lanjut edit</button>
+        <button type="button" class="btn primary" data-g="save">💾 Save & lanjutkan</button>
+      </div>
+    </div></div>`);
+  $('#guard [data-g="save"]').focus();
+}
+function closeGuard(choice) {
+  const cont = guardCont; guardCont = null;
+  document.getElementById('guard')?.remove();
+  if (choice === 'stay' || !cont) { $('.tpl-ed')?.focus(); return; }
+  endEdit(choice === 'save', false);
+  cont();
+}
+document.addEventListener('click', e => {
+  const g = e.target.closest('#guard [data-g]');
+  if (g) closeGuard(g.dataset.g);
+  else if (e.target.id === 'guard') closeGuard('stay');
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('guard')) closeGuard('stay'); });
+
+// ---- Sisipkan / pindah / keluarkan token
+function caretRange(x, y, ed) {
+  let r = null;
+  if (document.caretPositionFromPoint) {
+    const p = document.caretPositionFromPoint(x, y);
+    if (p?.offsetNode) { r = document.createRange(); r.setStart(p.offsetNode, p.offset); }
+  } else if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(x, y);
+  if (!r || !ed.contains(r.startContainer)) r = endRange(ed);
+  const node = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+  const tk = node?.closest('.tk');
+  if (tk && ed.contains(tk)) {
+    const b = tk.getBoundingClientRect(); r = document.createRange();
+    if (x < b.left + b.width / 2) r.setStartBefore(tk); else r.setStartAfter(tk);
+  }
+  r.collapse(true); return r;
+}
+function endRange(ed) {
+  const r = document.createRange(), last = ed.lastChild;
+  if (last?.nodeType === 3 && last.nodeValue.endsWith('\n')) r.setStart(last, last.nodeValue.length - 1);
+  else if (last) r.setStartAfter(last); else r.setStart(ed, 0);
+  r.collapse(true); return r;
+}
+function insertTok(ed, range, node) {
+  range.insertNode(node);
+  const r = document.createRange(); r.setStartAfter(node); r.collapse(true);
+  if (document.activeElement === ed) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+  state.edit.last = { ed: ed.dataset.ed, range: r };
+  node.classList.add('tk-pop');
+  edChanged();
+}
+function newTokNode(chip) {
+  const w = document.createElement('span');
+  w.innerHTML = tokHTML(cur(), chip.dataset.ed, chip.dataset.k, chip.dataset.kind);
+  return w.firstChild;
+}
+// Ingat posisi kursor terakhir di editor (untuk menyisipkan variabel dari palet)
+function saveEdRange() {
+  if (!state.edit) return;
+  const sel = getSelection(); if (!sel.rangeCount) return;
+  const r = sel.getRangeAt(0);
+  const n = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement;
+  const ed = n?.closest?.('.tpl-ed');
+  if (ed) { const c = r.cloneRange(); c.collapse(false); state.edit.last = { ed: ed.dataset.ed, range: c }; }
+}
+document.addEventListener('selectionchange', saveEdRange);
+['keyup', 'mouseup', 'input', 'focusout'].forEach(ev => app.addEventListener(ev, e => { if (e.target.closest?.('.tpl-ed')) saveEdRange(); }, true));
+
+// Drag & drop berbasis pointer (jalan di mouse & layar sentuh)
+let drag = null;
+function dragTarget(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return { ed: el?.closest('.tpl-ed'), pal: el?.closest('.pal') };
+}
+function clearDragUI() {
+  $$('.drag-ghost, .drop-caret').forEach(n => n.remove());
+  $$('.dragging').forEach(n => n.classList.remove('dragging'));
+  $$('.drop-ok, .drop-bad, .drop-out').forEach(n => n.classList.remove('drop-ok', 'drop-bad', 'drop-out'));
+  document.body.classList.remove('dragging-tk');
+}
+document.addEventListener('pointerdown', e => {
+  if (!state.edit || e.button > 0) return;
+  const el = e.target.closest('.tpl-ed .tk, .pal-chip');
+  if (!el || e.target.closest('.tk-x')) return;
+  drag = { el, from: el.classList.contains('tk') ? 'ed' : 'pal', x: e.clientX, y: e.clientY, started: false };
+  if (drag.from === 'ed') e.preventDefault();
+});
+document.addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (!drag.started) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+    drag.started = true;
+    drag.el.classList.add('dragging');
+    document.body.classList.add('dragging-tk');
+    const gh = document.createElement('div');
+    gh.className = 'drag-ghost tk tk-' + drag.el.dataset.kind;
+    gh.textContent = tokLabel(cur(), drag.el.dataset.ed, drag.el.dataset.k, drag.el.dataset.kind);
+    document.body.appendChild(gh);
+    const ca = document.createElement('div'); ca.className = 'drop-caret'; ca.hidden = true;
+    document.body.appendChild(ca);
+  }
+  e.preventDefault();
+  drag.cx = e.clientX; drag.cy = e.clientY;
+  if (!drag.raf) drag.raf = requestAnimationFrame(autoScroll);
+  const gh = $('.drag-ghost'), ca = $('.drop-caret');
+  gh.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
+  const { ed, pal } = dragTarget(e.clientX, e.clientY);
+  $$('.drop-ok, .drop-bad, .drop-out').forEach(n => n.classList.remove('drop-ok', 'drop-bad', 'drop-out'));
+  ca.hidden = true;
+  if (ed) {
+    const ok = ed.dataset.ed === drag.el.dataset.ed;
+    ed.classList.add(ok ? 'drop-ok' : 'drop-bad');
+    if (ok) {
+      const r = caretRange(e.clientX, e.clientY, ed);
+      const probe = document.createElement('span'); probe.textContent = '​';
+      r.insertNode(probe);
+      const b = probe.getBoundingClientRect(); probe.remove();
+      Object.assign(ca.style, { left: b.left - 1 + 'px', top: b.top + 'px', height: (b.height || 18) + 'px' });
+      ca.hidden = false;
+    }
+  } else if (pal && drag.from === 'ed') pal.classList.add('drop-out');
+}, { passive: false });
+// Geser otomatis saat menyeret dekat tepi atas/bawah area editor
+function autoScroll() {
+  if (!drag?.started) return;
+  const y = drag.cy, EDGE = 48, SPEED = 14;
+  const body = state.view === 'desktop' ? $('.p-raw .panel-body') : null;
+  if (body) {
+    const r = body.getBoundingClientRect();
+    if (y < r.top + EDGE && y > r.top - 60) body.scrollTop -= SPEED;
+    else if (y > r.bottom - EDGE && y < r.bottom + 20) body.scrollTop += SPEED;
+  } else {
+    const pal = $('.m-format .pal'), bottom = pal ? pal.getBoundingClientRect().top : innerHeight;
+    if (y < EDGE + 20) scrollBy(0, -SPEED);
+    else if (y > bottom - EDGE && y < bottom + 10) scrollBy(0, SPEED);
+  }
+  drag.raf = requestAnimationFrame(autoScroll);
+}
+function endDrag(e, cancelled) {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.raf) cancelAnimationFrame(d.raf);
+  if (!d.started) {
+    clearDragUI();
+    // ketuk chip palet → sisipkan di posisi kursor terakhir
+    if (d.from === 'pal' && !cancelled) {
+      const want = d.el.dataset.ed, ed = $(`.tpl-ed[data-ed="${want}"]`); if (!ed) return;
+      const last = state.edit.last;
+      const r = last && last.ed === want && ed.contains(last.range.startContainer) ? last.range : endRange(ed);
+      insertTok(ed, r, newTokNode(d.el));
+      toast('Variabel disisipkan ✓');
+    }
+    return;
+  }
+  const { ed, pal } = cancelled ? {} : dragTarget(e.clientX, e.clientY);
+  clearDragUI();
+  $$('.tpl-ed').forEach(x => x.normalize());
+  if (ed) {
+    if (ed.dataset.ed !== d.el.dataset.ed) { toast(d.el.dataset.ed === 'item' ? 'Variabel per lokasi hanya untuk Template per lokasi' : 'Variabel umum hanya untuk Template utama'); return; }
+    const r = caretRange(e.clientX, e.clientY, ed);
+    insertTok(ed, r, d.from === 'ed' ? d.el : newTokNode(d.el));
+  } else if (pal && d.from === 'ed') {
+    d.el.remove(); edChanged(); toast('Variabel dikeluarkan dari template');
+  }
+}
+document.addEventListener('pointerup', e => endDrag(e, false));
+document.addEventListener('pointercancel', e => endDrag(e, true));
+document.addEventListener('dragstart', e => { if (e.target.closest?.('.tk, .pal-chip')) e.preventDefault(); });
+
+function addCustomVar() {
+  const s = cur(), inp = $('.pal-input'); if (!inp || !state.edit) return;
+  const name = inp.value.replace(/\s+/g, ' ').trim();
+  const where = $('.pal-scope')?.value || 'main';
+  if (!name) { inp.focus(); toast('Tulis nama variabelnya dulu'); return; }
+  if (/[{}\n]/.test(name) || /^\[\[/.test(name) || (where === 'item' && name === 'No')) { toast('Nama tidak boleh berisi { } atau [[ ]]'); return; }
+  readDraft();
+  const d = state.edit.draft, kv = knownVars(s, d), list = where === 'item' ? kv.i : kv.g;
+  if (list.some(k => k.toLowerCase() === name.toLowerCase())) { toast('Variabel itu sudah ada di daftar'); return; }
+  (where === 'item' ? d.cvi : d.cv).push(name);
+  refreshSlide(s);
+  inp.value = '';
+  const ed = $(`.tpl-ed[data-ed="${where}"]`), last = state.edit.last;
+  if (ed && last && last.ed === where && ed.contains(last.range.startContainer)) {
+    insertTok(ed, last.range, newTokNode({ dataset: { ed: where, k: name, kind: 'v' } }));
+    toast(`Variabel "${name}" ditambahkan di posisi kursor ✓`);
+  } else {
+    edChanged();
+    toast(`Variabel "${name}" ditambahkan — seret ke template`);
+  }
+}
+
 // ------------------------------------------------------------ event (delegasi)
 app.addEventListener('click', e => {
   const goBtn = e.target.closest('[data-go]');
@@ -668,8 +1077,10 @@ app.addEventListener('click', e => {
 
   const mm = e.target.closest('[data-mmode]');
   if (mm) {
-    state.mmode = mm.dataset.mmode; LS.set('mmode', state.mmode);
-    const card = $('.m-format'); if (card) { card.outerHTML = mobileFormatHTML(cur()); renderPreviews(); }
+    guard(() => {
+      state.mmode = mm.dataset.mmode; LS.set('mmode', state.mmode);
+      const card = $('.m-format'); if (card) { card.outerHTML = mobileFormatHTML(cur()); renderPreviews(); }
+    });
     return;
   }
 
@@ -709,18 +1120,60 @@ app.addEventListener('click', e => {
       $('.dirty-pop', row).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       return;
     }
-    case 'set-default': setDefault(); return;
+    case 'set-default': guard(() => { renderTplArea(); setDefault(); }); return;
     case 'reset-all':
-      if (!changeCount(s)) { toast('Tidak ada perubahan — sudah sesuai default'); return; }
-      if (!confirm('Batalkan semua perubahan sementara di slide ini?')) return;
-      delete temp[s.id]; rerenderVars(); toast('Kembali ke default'); return;
-    case 'load-builtin': {
-      s.keys.forEach(k => setVal(s, 'g', k, builtinOf(s, 'g', k)));
-      if (s.type === 'group') { T(s).items = clone(s.defaultItems); normalizeItems(s); }
-      rerenderVars();
-      toast(changeCount(s) ? 'Contoh bawaan dimuat (sementara) — tekan Set to Default untuk menyimpan' : 'Default sudah sama dengan contoh bawaan');
+      guard(() => {
+        if (!changeCount(s)) { renderTplArea(); toast('Tidak ada perubahan — sudah sesuai default'); return; }
+        if (!confirm('Batalkan semua perubahan sementara di slide ini (termasuk template)?')) { renderTplArea(); return; }
+        delete temp[s.id]; delete tempTpl[s.id]; refreshSlide(s); renderTplArea(); rerenderVars(); toast('Kembali ke default');
+      });
+      return;
+    case 'load-builtin':
+      guard(() => {
+        const b0 = { tpl: s.baseTpl, itemTpl: s.baseItemTpl, cv: [], cvi: [] };
+        if (sameTpl(b0, defTpl(s))) delete tempTpl[s.id]; else tempTpl[s.id] = b0;
+        refreshSlide(s);
+        s.keys.forEach(k => setVal(s, 'g', k, builtinOf(s, 'g', k)));
+        if (s.type === 'group') { T(s).items = clone(s.defaultItems); normalizeItems(s); }
+        renderTplArea(); rerenderVars();
+        toast(changeCount(s) ? 'Contoh bawaan dimuat (sementara) — tekan Set to Default untuk menyimpan' : 'Default sudah sama dengan contoh bawaan');
+      });
+      return;
+    // ---- Edit Template
+    case 'tpl-edit': startEdit(); return;
+    case 'tpl-save': endEdit(true); return;
+    case 'tpl-cancel':
+      if (editDirty() && !confirm('Buang perubahan template yang belum di-Save?')) return;
+      endEdit(false); return;
+    case 'tk-del': {
+      const tk = b.closest('.tk'); if (!tk || !state.edit) return;
+      tk.remove(); edChanged(); toast('Variabel dikeluarkan dari template'); return;
+    }
+    case 'tpl-addvar': addCustomVar(); return;
+    case 'tpl-delvar': {
+      const c = b.closest('.pal-chip'); if (!c || !state.edit) return;
+      const d = state.edit.draft, list = c.dataset.ed === 'item' ? 'cvi' : 'cv';
+      d[list] = d[list].filter(k => k !== c.dataset.k);
+      edChanged(); return;
+    }
+    case 'tpl-builtin': {
+      if (!state.edit || !confirm('Ganti isi editor dengan template bawaan? (belum tersimpan sampai kamu tekan Save)')) return;
+      Object.assign(state.edit.draft, { tpl: s.baseTpl, itemTpl: s.baseItemTpl, cv: [], cvi: [] });
+      $$('.tpl-ed').forEach(ed => { ed.innerHTML = edHTML(s, ed.dataset.ed === 'item' ? s.baseItemTpl : s.baseTpl, ed.dataset.ed); });
+      state.edit.last = null; edChanged(); return;
+    }
+    case 'tpl-info': {
+      const wrap = b.closest('.tpl-flag-wrap'); const open = $('.dirty-pop', wrap);
+      $$('.dirty-pop').forEach(p => p.remove());
+      if (open) return;
+      wrap.insertAdjacentHTML('beforeend', `<div class="dirty-pop tpl-pop" role="dialog">
+        <div class="dp-msg"><b>Template diubah (sementara)</b>, <b>Set to Default</b> jika ingin menyimpan untuk semua orang.</div>
+        <div class="dp-act"><button type="button" class="btn sm ghost" data-act="tpl-revert">↺ Kembalikan</button><button type="button" class="btn sm primary" data-act="set-default">💾 Set to Default</button></div>
+      </div>`);
       return;
     }
+    case 'tpl-revert':
+      delete tempTpl[s.id]; refreshSlide(s); renderTplArea(); rerenderVars(); toast('Template dikembalikan ke default'); return;
     case 'clear-all': {
       s.keys.forEach(k => { if (!s.metaMap[k].strict) setVal(s, 'g', k, ''); });
       if (s.type === 'group') {
@@ -757,6 +1210,7 @@ app.addEventListener('click', e => {
 
 app.addEventListener('input', e => {
   const t = e.target;
+  if (t.closest('.tpl-ed')) { edChanged(); return; }
   if (t.matches('.var-input')) {
     const row = t.closest('.var');
     setVal(cur(), row.dataset.scope, row.dataset.k, t.value);
@@ -784,6 +1238,18 @@ app.addEventListener('focusout', e => {
 app.addEventListener('submit', e => { if (e.target.matches('.fb-form')) { e.preventDefault(); submitFb(e.target); } });
 app.addEventListener('keydown', e => {
   if (e.target.matches('.fb-text') && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.target.form.requestSubmit(); }
+  if (e.target.matches('.pal-input') && e.key === 'Enter') { e.preventDefault(); addCustomVar(); }
+  if (e.target.closest('.tpl-ed')) {
+    if (e.key === 'Enter') { e.preventDefault(); document.execCommand('insertLineBreak'); }
+    if ((e.ctrlKey || e.metaKey) && /^[biu]$/i.test(e.key)) e.preventDefault(); // tanpa format tebal/miring HTML
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); endEdit(true); }
+  }
+});
+// tempel sebagai teks biasa
+app.addEventListener('paste', e => {
+  if (!e.target.closest?.('.tpl-ed')) return;
+  e.preventDefault();
+  document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
 });
 document.addEventListener('keydown', e => {
   if (!state.view || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -791,7 +1257,17 @@ document.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft') go(state.idx - 1);
   if (e.key === 'ArrowRight') go(state.idx + 1);
 });
-window.addEventListener('hashchange', route);
+// Pindah slide / tampilan saat masih mengedit template → tanya dulu
+let curHash = location.hash;
+window.addEventListener('hashchange', () => {
+  if (state.edit && location.hash !== curHash) {
+    const target = location.hash;
+    history.replaceState(null, '', curHash || '#/');
+    guard(() => { location.hash = target; });
+    return;
+  }
+  route();
+});
 let resizeT;
 window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(growAll, 120); });
 // tutup kotak info "Perubahan sementara" saat klik di luar
@@ -831,13 +1307,16 @@ function refreshFbUI() { updateConn(); renderFb(); updateVarsFoot(); }
 function listenDefaults() {
   FB.mod.onValue(FB.mod.ref(FB.db, 'defaults'), snap => {
     const all = snap.val() || {};
+    const c = cur(), sig = keySig(c), tplBefore = c?.tpl;
     for (const s of SLIDES) {
       if (s.type === 'request') continue;
       shared[s.id] = decodeShared(s, all[s.id]);
       pruneTemp(s);
+      refreshSlide(s);
     }
     sharedLoaded = true; FB.defErr = '';
-    syncInputs();
+    if (c && c.type !== 'request' && !state.edit && (c.tpl !== tplBefore || keySig(c) !== sig)) renderTplArea();
+    if (c && keySig(c) !== sig) rerenderVars(); else syncInputs();
   }, err => { sharedLoaded = true; FB.defErr = err.message; updateVarsFoot(); });
 }
 async function setDefault() {
@@ -851,9 +1330,9 @@ async function setDefault() {
     await FB.mod.set(FB.mod.ref(FB.db, 'defaults/' + s.id), {
       ...defaultPayload(s), ver: TEMPLATE_VERSION, ts: FB.mod.serverTimestamp(), by: String(LS.get('nama', '') || '').slice(0, 40),
     });
-    delete temp[s.id];
+    delete temp[s.id]; delete tempTpl[s.id]; refreshSlide(s);
     $$('.dirty-pop').forEach(p => p.remove());
-    if (cur() === s) rerenderVars();
+    if (cur() === s) { renderTplArea(); rerenderVars(); }
     toast('Tersimpan sebagai default ✓ Semua orang akan melihatnya');
   } catch (e) {
     toast('Gagal menyimpan: ' + (e.code === 'PERMISSION_DENIED' || /permission/i.test(e.message) ? 'ditolak oleh Rules Firebase (perbarui Rules)' : (e.code || e.message)));
@@ -984,8 +1463,9 @@ function renderRequestAgg(items) {
 
 setInterval(() => { $$('time[data-ts]').forEach(t => { const ts = +t.dataset.ts; if (ts) t.textContent = relTime(ts); }); updateVarsFoot(); }, 60000);
 window.addEventListener('beforeunload', e => {
-  if (SLIDES.some(s => temp[s.id] && changeCount(s))) { e.preventDefault(); e.returnValue = ''; }
+  if (editDirty() || SLIDES.some(s => s.type !== 'request' && changeCount(s))) { e.preventDefault(); e.returnValue = ''; }
 });
+SLIDES.forEach(refreshSlide);
 
 // ------------------------------------------------------------ mulai
 route();
